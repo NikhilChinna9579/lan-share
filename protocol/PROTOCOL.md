@@ -1,0 +1,125 @@
+# LAN Share protocol — version 1
+
+The contract both apps implement. If the Android and Windows code ever disagree,
+**this file is right** and the code is a bug.
+
+## 1. Identity
+
+- On first launch a device generates an **ECDSA P-256** key pair and a self-signed
+  X.509 certificate (validity 20 years, CN = device name).
+- **Device ID / fingerprint** = lowercase hex SHA-256 of the certificate's DER-encoded
+  `SubjectPublicKeyInfo`. Hashing the key (not the whole cert) means the ID stays the same
+  if the certificate is ever re-issued with the same key.
+- The private key never leaves the device (Android Keystore / Windows protected storage).
+
+## 2. Discovery (mDNS / DNS-SD)
+
+| Field | Value |
+| --- | --- |
+| Service type | `_lanshare._tcp` |
+| Domain | `local.` |
+| Instance name | device's friendly name, e.g. `Laptop` |
+| Port | TCP port the device listens on (default 47821) |
+| TXT `v` | protocol version, `1` |
+| TXT `id` | device fingerprint (64 hex chars) |
+| TXT `p` | platform: `android` or `windows` |
+
+A device only acts on announcements whose `id` is in its trust store (or, during
+pairing, the `id` from the QR code).
+
+## 3. Transport
+
+- TCP, then **TLS 1.3 only**. Both sides present their certificate (mutual TLS).
+- Normal verification of CA chains is turned off (certs are self-signed). Instead each
+  side computes the peer's fingerprint and **rejects the connection unless it is in the
+  trust store**. This check runs during the handshake, before any message is read.
+- Exception: a device in **pairing mode** accepts an unknown client certificate, but only
+  `pair_request` is allowed on that connection, and it must carry the valid one-time code.
+- One connection per action (ping, folder list, one transfer). Close when done.
+- Idle timeout: 15 s without a frame → close.
+
+## 4. Framing
+
+Every control message is a frame:
+
+```
++----------------------+---------------------------------+
+| length: uint32, BE   | JSON object, UTF-8, `length` B  |
++----------------------+---------------------------------+
+```
+
+- Maximum frame length: 1 MiB. Larger → protocol error, close.
+- Every JSON object has a `"type"` field. Unknown types → reply `error` with
+  code `unknown_type`, keep the connection.
+- File contents are **not** framed: after `file_accept`, the sender writes exactly
+  `size` raw bytes per file, followed by a `file_end` frame.
+
+## 5. Messages
+
+### Session
+
+| Type | Direction | Fields | Notes |
+| --- | --- | --- | --- |
+| `hello` | both, first frame | `v` (int), `name` (string), `platform` | Version mismatch → `error` `version`, close |
+| `ping` | client → server | — | |
+| `pong` | server → client | — | |
+| `error` | either | `code` (string), `message` (string) | See codes below |
+
+### Pairing
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `pair_request` | phone → laptop | `code` (6 digits), `name` |
+| `pair_ok` | laptop → phone | `name` |
+| `pair_fail` | laptop → phone | `reason`: `bad_code`, `expired`, `not_pairing` |
+
+The QR code encodes this JSON (as text):
+
+```json
+{"v":1,"host":"192.168.1.20","port":47821,"id":"<fingerprint>","name":"Laptop","code":"481920"}
+```
+
+The one-time code is random, valid for **2 minutes**, and dies after one use or
+**5 wrong attempts**.
+
+### Folders
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `folders_request` | sender → receiver | — |
+| `folders_response` | receiver → sender | `default` (folder key), `folders`: list of `{key, label}` |
+
+Folder **keys** (e.g. `downloads`, `documents`, `pictures`, `recent:3`) are what travel
+on the wire — never full paths. The receiver maps keys to real paths itself, so a sender
+can never write outside the folders the receiver offers.
+
+### Transfer
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `file_offer` | sender → receiver | `transfer_id` (UUID), `folder` (key), `files`: list of `{name, size}` |
+| `file_accept` | receiver → sender | `transfer_id` |
+| `file_reject` | receiver → sender | `transfer_id`, `reason`: `declined`, `no_space`, `bad_folder`, `bad_name` |
+| *(raw bytes)* | sender → receiver | exactly `size` bytes of the current file |
+| `file_end` | sender → receiver | `index` (int), `sha256` (hex) |
+| `transfer_done` | receiver → sender | `transfer_id`, `saved`: list of final file names |
+
+Receiver rules:
+
+1. **File names** are sanitised: strip any path parts (`/`, `\`, `..`), drop control
+   characters, forbid Windows reserved names (`CON`, `NUL`, …). Empty after cleaning →
+   `file_reject` `bad_name`.
+2. Write to `<name>.part`; on `file_end` compare SHA-256. Match → rename to the final
+   name (`name (2).ext` if taken). Mismatch → delete the `.part`, send `error` `checksum`.
+3. Connection drops mid-transfer → delete every `.part` from that transfer.
+
+## 6. Error codes
+
+`version`, `unknown_type`, `bad_frame`, `not_trusted`, `bad_folder`, `checksum`,
+`io`, `internal`.
+
+## 7. Versioning
+
+`v` is an integer. Adding an optional field or a new message type does **not** bump it
+(unknown fields are ignored, unknown types get `error unknown_type`). Changing the
+meaning of an existing field or message **does**.

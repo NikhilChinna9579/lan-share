@@ -1,0 +1,18 @@
+# Go
+windows/lanshare.exe
+*.exe
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+*.keystore
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
