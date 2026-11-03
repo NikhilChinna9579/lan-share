@@ -57,3 +57,28 @@ jobs:
         with:
           name: lanshare-android
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  # Puts the latest .exe and APK on the "builds" branch, replacing the previous ones,
+  # so they can be downloaded straight from GitHub's file view without unzipping.
+  publish:
+    name: Publish latest builds
+    needs: [windows, android]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Force-push to the builds branch
+        run: |
+          mkdir site && cd site
+          cp ../out/lanshare-windows/lanshare.exe .
+          cp ../out/lanshare-android/app-debug.apk lanshare.apk
+          printf 'branch: %s\ncommit: %s\nbuilt: %s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "$(date -u +%FT%TZ)" > BUILD.txt
+          git init -q -b builds
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add . && git commit -qm "Builds from $GITHUB_REF_NAME @ ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" builds
