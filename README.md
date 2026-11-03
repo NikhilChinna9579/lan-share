@@ -3,7 +3,7 @@
 Send files between an Android phone and a Windows laptop over home Wi-Fi — by voice,
 from a floating bubble, with no cloud, no login and no messaging app in between.
 
-**Status:** design done, project skeletons in place. Next: the pairing + transfer spike.
+**Status:** spike — pair the phone with the laptop by QR and send files over encrypted Wi-Fi. Next: presence, tray app, bubble, voice.
 
 ## Where things are
 

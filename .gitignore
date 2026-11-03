@@ -16,3 +16,6 @@ android/.idea/
 Thumbs.db
 .vscode/
 .idea/
+
+# Fixed debug signing key: committed on purpose (see android/app/build.gradle.kts)
+!android/debug.keystore

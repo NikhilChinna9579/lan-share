@@ -9,10 +9,21 @@ android {
 
     defaultConfig {
         applicationId = "com.nikhil.lanshare"
-        minSdk = 26 // Android 8.0: needed for the overlay bubble and foreground services we use
+        minSdk = 29 // Android 10: first version with TLS 1.3, which the protocol requires
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0-spike"
+    }
+
+    signingConfigs {
+        // A fixed debug key (committed on purpose; it protects nothing) so each new CI
+        // build installs over the previous one instead of needing an uninstall.
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -33,5 +44,8 @@ android {
     }
 }
 
-// No AndroidX or UI libraries yet: the plain Android framework keeps the app tiny.
-dependencies {}
+dependencies {
+    // Google's QR scanner UI, provided by Play services: no camera permission needed
+    // and almost nothing added to our APK.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+}
