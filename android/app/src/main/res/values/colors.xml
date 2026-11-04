@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Neutrals -->
+    <color name="bg">#F5F6FA</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="outline">#E3E6EE</color>
+    <color name="ink">#12141A</color>
+    <color name="ink_muted">#5D6371</color>
+    <!-- Accent (replaced by the wallpaper colours on Android 12+, see values-v31) -->
+    <color name="primary">#2563EB</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="primary_container">#E1E9FF</color>
+    <color name="on_primary_container">#0B2A6B</color>
+    <!-- Status -->
+    <color name="online">#16A34A</color>
+    <color name="offline">#A3A9B6</color>
+    <color name="checking">#D9A21B</color>
+    <color name="error">#DC2626</color>
+    <color name="error_container">#FDE8E8</color>
+    <color name="success_container">#DCF5E5</color>
+    <color name="track">#E3E6EE</color>
+    <color name="scrim">#66000000</color>
+    <!-- Launcher icon stays on-brand whatever the wallpaper -->
+    <color name="launcher_bg">#2563EB</color>
+</resources>

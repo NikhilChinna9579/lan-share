@@ -8,6 +8,7 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
 import java.net.InetSocketAddress
+import java.net.Socket
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
@@ -18,16 +19,15 @@ import javax.net.ssl.X509TrustManager
 class ProtocolException(message: String) : IOException(message)
 
 /**
- * One mutual-TLS connection to a peer whose key fingerprint we already know
- * (from the QR code or the saved pairing). PROTOCOL.md §3–§4.
+ * One mutual-TLS connection to a peer (PROTOCOL.md §3–§4): framed JSON messages,
+ * plus raw byte streams for file contents.
  */
-class PeerConnection private constructor(private val socket: SSLSocket) : Closeable {
-    private val input = DataInputStream(BufferedInputStream(socket.inputStream, 64 * 1024))
+class PeerConnection(private val socket: SSLSocket) : Closeable {
+    val input = DataInputStream(BufferedInputStream(socket.inputStream, 64 * 1024))
     val output = DataOutputStream(BufferedOutputStream(socket.outputStream, 64 * 1024))
 
     /** The peer's friendly name from its hello. */
     var peerName: String = ""
-        private set
 
     fun send(msg: JSONObject) {
         val body = msg.toString().toByteArray(Charsets.UTF_8)
@@ -56,34 +56,66 @@ class PeerConnection private constructor(private val socket: SSLSocket) : Closea
         return msg
     }
 
+    fun hello(myName: String) = JSONObject()
+        .put("type", "hello").put("v", Protocol.VERSION)
+        .put("name", myName).put("platform", "android")
+
     override fun close() = socket.close()
 
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 5_000
         private const val IDLE_TIMEOUT_MS = 15_000
 
         /** Connects, checks the peer's key against [pinnedId], and swaps hellos. */
-        fun open(host: String, port: Int, pinnedId: String, myName: String): PeerConnection {
-            val tls = SSLContext.getInstance("TLSv1.3")
-            tls.init(arrayOf(Identity.keyManager), arrayOf(PinnedTrust(pinnedId)), null)
-            val socket = tls.socketFactory.createSocket() as SSLSocket
+        fun open(host: String, port: Int, pinnedId: String, myName: String, connectTimeoutMs: Int = 5_000): PeerConnection {
+            val socket = tlsContext(PinnedTrust(pinnedId)).socketFactory.createSocket() as SSLSocket
             try {
                 socket.enabledProtocols = arrayOf("TLSv1.3")
-                socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+                socket.connect(InetSocketAddress(host, port), connectTimeoutMs)
                 socket.soTimeout = IDLE_TIMEOUT_MS
                 socket.startHandshake()
                 val conn = PeerConnection(socket)
-                conn.send(JSONObject()
-                    .put("type", "hello").put("v", Protocol.VERSION)
-                    .put("name", myName).put("platform", "android"))
-                val hello = conn.expect("hello")
-                conn.peerName = hello.optString("name")
+                conn.send(conn.hello(myName))
+                conn.peerName = conn.expect("hello").optString("name")
                 return conn
             } catch (e: Exception) {
                 socket.close()
                 throw e
             }
         }
+
+        /**
+         * Connects to [host]:[port] and returns the key fingerprint it presents, without
+         * trusting it or sending anything. Used when scanning the network for a device.
+         */
+        fun probe(host: String, port: Int): String? {
+            var seen: String? = null
+            val recorder = object : X509TrustManager {
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                    seen = chain?.firstOrNull()?.let { Identity.fingerprintOf(it) }
+                    throw CertificateException("probe only") // never continue past the handshake
+                }
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
+                    throw CertificateException("client mode only")
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            }
+            val plain = Socket()
+            return try {
+                plain.connect(InetSocketAddress(host, port), 350)
+                val s = tlsContext(recorder).socketFactory.createSocket(plain, host, port, true) as SSLSocket
+                s.enabledProtocols = arrayOf("TLSv1.3")
+                s.soTimeout = 1_200
+                runCatching { s.startHandshake() }
+                s.close()
+                seen
+            } catch (e: IOException) {
+                null
+            } finally {
+                plain.close()
+            }
+        }
+
+        fun tlsContext(trust: X509TrustManager): SSLContext =
+            SSLContext.getInstance("TLSv1.3").apply { init(arrayOf(Identity.keyManager), arrayOf(trust), null) }
     }
 
     /** Accepts exactly one server key: the one we paired with. No CAs involved. */
@@ -91,7 +123,7 @@ class PeerConnection private constructor(private val socket: SSLSocket) : Closea
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
             val cert = chain?.firstOrNull() ?: throw CertificateException("no certificate")
             if (Identity.fingerprintOf(cert) != pinnedId) {
-                throw CertificateException("This is not your paired laptop (key mismatch)")
+                throw CertificateException("This is not your paired device (key mismatch)")
             }
         }
 

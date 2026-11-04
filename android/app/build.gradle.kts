@@ -11,8 +11,8 @@ android {
         applicationId = "com.nikhil.lanshare"
         minSdk = 29 // Android 10: first version with TLS 1.3, which the protocol requires
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0-spike"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     signingConfigs {

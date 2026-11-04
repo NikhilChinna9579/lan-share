@@ -4,6 +4,7 @@ name: build
 # run's "Artifacts" section on GitHub (Actions tab → pick the run → scroll down).
 on:
   push:
+    branches-ignore: [builds, checks]
   pull_request:
   workflow_dispatch:
 
@@ -24,6 +25,8 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -race ./...
+      - name: Build phone simulator (for testing)
+        run: go build ./cmd/fakephone
       - name: Build lanshare.exe
         env:
           GOOS: windows

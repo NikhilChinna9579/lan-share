@@ -55,13 +55,14 @@ object Identity {
         MessageDigest.getInstance("SHA-256").digest(cert.publicKey.encoded)
             .joinToString("") { "%02x".format(it) }
 
-    /** Always presents our one identity as the TLS client certificate. */
+    /** Always presents our one identity, both as a TLS client and as a TLS server. */
     val keyManager = object : X509ExtendedKeyManager() {
         override fun getClientAliases(keyType: String?, issuers: Array<out Principal>?) = arrayOf(ALIAS)
         override fun chooseClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, socket: Socket?) = ALIAS
         override fun chooseEngineClientAlias(keyType: Array<out String>?, issuers: Array<out Principal>?, engine: SSLEngine?) = ALIAS
-        override fun getServerAliases(keyType: String?, issuers: Array<out Principal>?): Array<String>? = null
-        override fun chooseServerAlias(keyType: String?, issuers: Array<out Principal>?, socket: Socket?): String? = null
+        override fun getServerAliases(keyType: String?, issuers: Array<out Principal>?) = arrayOf(ALIAS)
+        override fun chooseServerAlias(keyType: String?, issuers: Array<out Principal>?, socket: Socket?) = ALIAS
+        override fun chooseEngineServerAlias(keyType: String?, issuers: Array<out Principal>?, engine: SSLEngine?) = ALIAS
         override fun getCertificateChain(alias: String?): Array<X509Certificate> = arrayOf(certificate)
         override fun getPrivateKey(alias: String?): PrivateKey = privateKey
     }

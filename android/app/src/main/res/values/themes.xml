@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LanShare" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:colorPrimary">@color/primary</item>
+        <item name="android:colorAccent">@color/primary</item>
+        <item name="android:colorControlActivated">@color/primary</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:textColorSecondary">@color/ink_muted</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.LanShare.Alert</item>
+    </style>
+
+    <style name="Theme.LanShare.Alert" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/primary</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
+    </style>
+
+    <!-- Bottom sheet: a plain Dialog pinned to the bottom of the screen. -->
+    <style name="Theme.LanShare.Sheet" parent="android:Theme.Material.Light.Dialog.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.4</item>
+        <item name="android:windowAnimationStyle">@style/SheetAnimation</item>
+        <item name="android:colorAccent">@color/primary</item>
+    </style>
+
+    <style name="SheetAnimation">
+        <item name="android:windowEnterAnimation">@anim/sheet_in</item>
+        <item name="android:windowExitAnimation">@anim/sheet_out</item>
+    </style>
+
+    <!-- Text styles -->
+    <style name="Text.Title">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+    <style name="Text.Body">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/ink_muted</item>
+        <item name="android:lineSpacingMultiplier">1.15</item>
+    </style>
+    <style name="Text.Section">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/ink_muted</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+
+    <style name="Button.Primary">
+        <item name="android:background">@drawable/bg_button_primary</item>
+        <item name="android:textColor">@color/on_primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:minHeight">52dp</item>
+        <item name="android:paddingStart">20dp</item>
+        <item name="android:paddingEnd">20dp</item>
+        <item name="android:drawableTint">@color/on_primary</item>
+        <item name="android:drawablePadding">10dp</item>
+        <item name="android:gravity">center</item>
+    </style>
+    <style name="Button.Tonal" parent="Button.Primary">
+        <item name="android:background">@drawable/bg_button_tonal</item>
+        <item name="android:textColor">@color/on_primary_container</item>
+        <item name="android:drawableTint">@color/on_primary_container</item>
+        <item name="android:minHeight">40dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">18dp</item>
+        <item name="android:drawablePadding">6dp</item>
+    </style>
+    <style name="Button.Text">
+        <item name="android:background">@drawable/bg_ripple_rounded</item>
+        <item name="android:textColor">@color/primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:drawableTint">@color/primary</item>
+        <item name="android:drawablePadding">8dp</item>
+    </style>
+</resources>
