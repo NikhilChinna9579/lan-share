@@ -169,6 +169,21 @@ class MainActivity : Activity() {
     }
 
     private var lastScreen = ""
+    private val reported = HashMap<String, String>()
+
+    /**
+     * Debug builds: logs where a button is on screen, so automated tests can tap it even
+     * while a progress bar keeps the screen busy (Android's UI reader waits for idle).
+     */
+    private fun reportPos(v: View, label: String) {
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        v.post {
+            if (!v.isShown) return@post
+            val xy = IntArray(2).also { v.getLocationOnScreen(it) }
+            val at = "${xy[0] + v.width / 2},${xy[1] + v.height / 2}"
+            if (reported[label] != at) { reported[label] = at; Log.d(TAG, "ui: $label at $at") }
+        }
+    }
 
     private fun render() {
         val any = DeviceStore.all(this).isNotEmpty()
@@ -223,6 +238,7 @@ class MainActivity : Activity() {
                     action.visibility = View.VISIBLE
                     action.text = "Accept"
                     action.setOnClickListener { t.accept?.invoke() }
+                    reportPos(action, "Accept")
                     dismiss.visibility = View.VISIBLE
                     dismiss.contentDescription = "Decline"
                     dismiss.setOnClickListener { t.cancel?.invoke() }
@@ -240,6 +256,7 @@ class MainActivity : Activity() {
                         action.visibility = View.VISIBLE
                         action.text = "Cancel"
                         action.setOnClickListener { worker.execute { stop() } }
+                        reportPos(action, "Cancel")
                     }
                 }
                 Hub.State.DONE -> {
@@ -262,6 +279,7 @@ class MainActivity : Activity() {
                         action.visibility = View.VISIBLE
                         action.text = "Retry"
                         action.setOnClickListener { Hub.dismiss(t.id); again() }
+                        reportPos(action, "Retry")
                     }
                     dismiss.visibility = View.VISIBLE
                     dismiss.setOnClickListener { Hub.dismiss(t.id) }

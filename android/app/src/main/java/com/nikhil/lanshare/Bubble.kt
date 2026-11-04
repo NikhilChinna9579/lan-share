@@ -56,7 +56,14 @@ class Bubble(private val ctx: Context) {
         }
         v.setOnTouchListener(Drag())
         runCatching { wm.addView(v, params) }
-            .onSuccess { view = v; Log.i("LanShare", "bubble shown") }
+            .onSuccess {
+                view = v
+                Log.i("LanShare", "bubble shown")
+                v.post { // where it is (tests tap it there)
+                    val xy = IntArray(2).also { v.getLocationOnScreen(it) }
+                    Log.d("LanShare", "ui: bubble at ${xy[0] + v.width / 2},${xy[1] + v.height / 2}")
+                }
+            }
             .onFailure { Log.w("LanShare", "bubble: $it") }
     }
 

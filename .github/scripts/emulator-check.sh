@@ -64,6 +64,17 @@ PY
   [ -n "$xy" ] || return 1
   A shell input tap $xy
 }
+# Tap a button by the position the app logged for it ("ui: Cancel at 540,812"): works
+# even while a progress bar keeps the screen from ever being idle.
+tap_logged() {
+  local xy
+  xy=$(applog | tail -n +$((MARK + 1)) | grep -oE "ui: $1 at [0-9]+,[0-9]+" | tail -1 | grep -oE '[0-9]+,[0-9]+$')
+  [ -n "$xy" ] || return 1
+  shade_closed
+  A shell input tap "${xy%,*}" "${xy#*,}"
+}
+# Restart the app and wait until it's ready to receive again.
+app_ready() { mark; app 2; until_ok 30 "seen 'receiving on port'" || log "note  receiving didn't come back in 30 s"; }
 screen_has() { A shell rm -f /sdcard/ui.xml; A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A shell cat /sdcard/ui.xml 2>/dev/null | grep -q "$1"; }
 
 cleanup() {
@@ -143,12 +154,12 @@ timeout 60 ./bin/lanshare -data "$LAPTOP_DATA" -folder downloads send "$WORK/Tri
 api /api/remote/mkdir "{\"device\":\"$DEV\",\"folder\":\"downloads\",\"path\":\"\",\"name\":\"Projects\"}" > "$WORK/mkdir.json"
 get "/api/remote/list?device=$DEV&folder=downloads&path=" | grep -q '"Projects"' \
   && pass "laptop made a new folder on the phone" || fail "new folder on the phone ($(cat "$WORK/mkdir.json"))"
-mark; hook demo.txt ask_on; app 3
+hook demo.txt ask_on; app_ready
 head -c 90000 /dev/urandom > "$WORK/Contract.pdf"
 ( timeout 70 ./bin/lanshare -data "$LAPTOP_DATA" -folder downloads send "$WORK/Contract.pdf" > "$OUT/send-ask.log" 2>&1 & )
 expect 20 'approval: asking about Contract.pdf' "phone asks before receiving"
 shot 05b-asking
-until_ok 10 "tap_text Accept"
+until_ok 10 "tap_logged Accept"
 expect 15 'approval: accepted Contract.pdf' "accepting on the phone"
 until_ok 20 "[ \"\$(phone_size '/sdcard/Download/Contract.pdf')\" = 90000 ]" && pass "accepted file arrived" || fail "accepted file arrived"
 hook demo.txt ask_off; app 3; hook demo.txt browse_off; app 3
@@ -189,12 +200,12 @@ if until_ok 40 "seen 'row: Downloads'"; then
   until_ok 10 "tap_text 'Save here'"
   if until_ok 20 "seen 'transfer out started: Big video.mp4'"; then
     sleep 2; shot 08b-sending-timer
-    mark; until_ok 10 "tap_text Cancel"
+    until_ok 10 "tap_logged Cancel"
     expect 15 'transfer out CANCELLED: Big video.mp4' "cancel stops the transfer"
     shot 08c-cancelled
     until_ok 10 "! ls '$HOME/Downloads' | grep -q 'Big video'" && pass "cancel leaves nothing on the laptop" \
       || fail "cancel leaves nothing on the laptop ($(ls "$HOME/Downloads" | tr '\n' ' '))"
-    mark; until_ok 10 "tap_text Retry"
+    until_ok 10 "tap_logged Retry"
     until_ok 90 "[ \"\$(stat -c %s '$HOME/Downloads/Big video.mp4' 2>/dev/null)\" = 209715200 ]" \
       && pass "retry sends it again, intact size" || fail "retry sends it again"
   else
@@ -238,11 +249,9 @@ A shell appops set $PKG SYSTEM_ALERT_WINDOW allow
 mark; hook demo.txt bubble; app 3
 expect 15 'bubble shown' "bubble appears over other apps"
 A shell input keyevent KEYCODE_HOME; sleep 2; shot 17-bubble-on-home
-# Where the bubble sits by default: right edge, 240 dp down.
-W=$(A shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1 | cut -dx -f1)
-D=$(A shell wm density | grep -oE '[0-9]+' | tail -1)
-X=$(( W - (36 * D / 160) )); Y=$(( 268 * D / 160 ))
-mark; A shell input tap $X $Y
+until_ok 10 "applog | tail -n +$((MARK + 1)) | grep -qE 'ui: bubble at '"
+BXY=$(applog | tail -n +$((MARK + 1)) | grep -oE 'ui: bubble at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
+mark; A shell input tap "${BXY%,*}" "${BXY#*,}"
 expect 10 'bubble tapped' "tapping the bubble"
 expect 10 'assistant: ready' "bubble opens the assistant"
 shot 18-assistant-from-bubble

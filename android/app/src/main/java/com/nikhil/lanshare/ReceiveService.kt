@@ -57,6 +57,7 @@ class ReceiveService : Service() {
             Identity.ensure(name)
             val srv = PhoneServer(this, name, { notifyReceived(this, it) })
             val port = srv.start()
+            android.util.Log.i("LanShare", "receiving on port $port")
             server = srv
             announce(name, port)
         }.onFailure { stopSelf() }
