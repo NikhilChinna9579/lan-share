@@ -94,6 +94,35 @@ sequenceDiagram
     R-->>S: transfer_done {saved names}
 ```
 
+### 3.2b Getting a file from the other device (fetch)
+
+1. The requester browses the other device's shared folders (`list_request`; folders
+   and files, newest first).
+2. It sends `fetch_request` with the file names. The owner checks each one is a plain,
+   visible file directly in that shared folder, then answers exactly like a sender:
+   `file_offer`, bytes, `file_end`. The requester saves into its default folder.
+3. Both sides reuse the same transfer code as sending (Go `internal/transfer`,
+   Kotlin `Transfer.kt`), so checksums, `.part` files and cancel behave the same.
+
+On Android, the standard folders (Downloads, Camera, …) are listed through MediaStore.
+Photos, videos and music made by other apps need the media permission (a row in
+Settings); other apps' documents stay hidden by Android, which is why "Add a folder"
+exists for those.
+
+### 3.2c The assistant (bubble + voice)
+
+1. The bubble is an overlay window owned by the receiving service, so it lives as long
+   as the phone is ready to receive. Tapping it opens `AssistantActivity`.
+2. Speech: Android's recognizer, asking for the offline model first; if there is none
+   for the language, it retries online (the hybrid). Typing works the same way.
+3. Understanding: `Commands.parse` (rules, on the phone, unit-tested) turns a sentence
+   into Send(what, device, folder) / Get(name, device) / Status.
+4. "this" = the file last shared into LAN Share (10 min); otherwise it offers the latest
+   photo, latest screenshot, or the file picker. Missing laptop or folder → a follow-up
+   question, answered by voice or tap. Then a 2-second pause to cancel, then the same
+   send/fetch code as the home screen.
+5. An online AI model for free-form requests is planned; it needs an API key.
+
 ### 3.3 Presence (online / offline)
 
 1. Each app keeps announcing `_lanshare._tcp` on mDNS.
