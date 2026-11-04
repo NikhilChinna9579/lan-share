@@ -324,6 +324,20 @@ else
   log "skip  restart check (no adb root here)"
 fi
 
+# ---------------------------------------------------------------- 11b. the signed release build starts
+REL=android/app/build/outputs/apk/release/app-release.apk
+if [ -f "$REL" ]; then
+  A uninstall $PKG >/dev/null   # different key from the debug build
+  A install "$REL" >/dev/null && pass "signed release APK installs" || fail "signed release APK installs"
+  A logcat -b crash -c
+  mark; A shell am start -n $PKG/.MainActivity >/dev/null
+  expect 30 'screen: unpaired' "signed release APK starts (shrunk code works)"
+  shot 19-release
+  crashed && fail "release build crashed" || pass "release build: no crash"
+else
+  log "skip  release check (signing key not set up yet)"
+fi
+
 # ---------------------------------------------------------------- 12. no crashes
 A logcat -d -b crash > "$OUT/crashes.txt" 2>&1
 if grep -q "com.nikhil.lanshare" "$OUT/crashes.txt"; then fail "app crashed (see crashes.txt)"; else pass "no crashes"; fi

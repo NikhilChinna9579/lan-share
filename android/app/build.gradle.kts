@@ -11,8 +11,8 @@ android {
         applicationId = "com.nikhil.lanshare"
         minSdk = 29 // Android 10: first version with TLS 1.3, which the protocol requires
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
 
     signingConfigs {
@@ -24,6 +24,17 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        // The real release key comes from CI secrets (never from the repo). Without them
+        // a release build is simply left unsigned.
+        System.getenv("RELEASE_KEYSTORE")?.takeIf { file(it).exists() }?.let { path ->
+            create("release") {
+                storeFile = file(path)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "lanshare"
+                keyPassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                storeType = "pkcs12"
+            }
+        }
     }
 
     buildTypes {
@@ -32,6 +43,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
 

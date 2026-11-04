@@ -132,10 +132,25 @@ jobs:
           gradle-version: "8.11.1"
       - name: Build debug APK and run unit tests (voice command parser)
         run: gradle --no-daemon assembleDebug testDebugUnitTest
+      # Signed release APK: only when the signing key is set up as repository secrets.
+      - name: Build signed release APK
+        env:
+          KEY_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEY_B64" ]; then echo "No signing key secrets yet: skipping the release APK."; exit 0; fi
+          echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks" gradle --no-daemon assembleRelease
+          rm -f "$RUNNER_TEMP/release.jks"
+          ls -la app/build/outputs/apk/release/
       - uses: actions/upload-artifact@v4
         with:
           name: lanshare-android
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
 
   emulator:
     name: Android app on an emulator, against the real laptop program
@@ -167,9 +182,19 @@ jobs:
         with:
           go-version: "1.24"
           cache-dependency-path: windows/go.mod
-      - name: Build APK
+      - name: Build APK (and the signed release, if the key is set up)
         working-directory: android
-        run: gradle --no-daemon assembleDebug
+        env:
+          KEY_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          gradle --no-daemon assembleDebug
+          if [ -n "$KEY_B64" ]; then
+            echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks" gradle --no-daemon assembleRelease
+            rm -f "$RUNNER_TEMP/release.jks"
+          fi
       - name: Build laptop program (Linux build of the Windows app)
         working-directory: windows
         run: go build -o ../bin/lanshare ./cmd/lanshare && go build -o ../bin/fakephone ./cmd/fakephone
@@ -218,7 +243,12 @@ jobs:
         run: |
           mkdir site && cd site
           cp ../out/lanshare-windows/lanshare.exe .
-          cp ../out/lanshare-android/app-debug.apk lanshare.apk
+          # The signed release is the one to install; the debug build (with test hooks)
+          # is kept as lanshare-debug.apk.
+          A=../out/lanshare-android
+          [ -f $A/debug/app-debug.apk ] && D=$A/debug/app-debug.apk || D=$A/app-debug.apk
+          [ -f $A/release/app-release.apk ] && R=$A/release/app-release.apk || R=$A/app-release.apk
+          if [ -f "$R" ]; then cp "$R" lanshare.apk; cp "$D" lanshare-debug.apk; else cp "$D" lanshare.apk; fi
           printf 'branch: %s\ncommit: %s\nbuilt: %s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "$(date -u +%FT%TZ)" > BUILD.txt
           git init -q -b builds
           git config user.name "github-actions[bot]"
