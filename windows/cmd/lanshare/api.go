@@ -299,6 +299,23 @@ func serveAPI(a *app, ln net.Listener) {
 	})
 
 	// Settings and system integration.
+	h("/api/install", func(*http.Request) (any, error) {
+		if err := install(); err != nil {
+			return nil, err
+		}
+		a.note("info", "Installed LAN Share", installedExe(), "")
+		go func() { time.Sleep(300 * time.Millisecond); a.requestQuit() }() // the installed copy takes over
+		return nil, nil
+	})
+	h("/api/uninstall", func(r *http.Request) (any, error) {
+		var in struct{ RemoveData bool }
+		readJSON(r, &in)
+		if err := uninstall(a.dataDir, in.RemoveData); err != nil {
+			return nil, err
+		}
+		go func() { time.Sleep(300 * time.Millisecond); a.requestQuit() }()
+		return nil, nil
+	})
 	h("/api/firewall", func(*http.Request) (any, error) {
 		err := allowFirewall()
 		if err == nil {

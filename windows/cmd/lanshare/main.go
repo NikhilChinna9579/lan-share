@@ -20,10 +20,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-// version is overwritten at build time: -ldflags "-X main.version=..."
-var version = "dev"
+// version and buildTime are set at build time: -ldflags "-X main.version=... -X main.buildTime=..."
+// buildTime (Unix seconds) decides which copy is newer when two different .exe files meet.
+var (
+	version   = "dev"
+	buildTime = "0"
+)
 
 const defaultPort = 47821
 
@@ -35,6 +40,7 @@ var (
 	flagNoWindow      = flag.Bool("no-window", false, "testing: never open a window; print the window's address instead")
 	flagPairingFile   = flag.String("pairing-file", "", "testing: write the pairing QR text here whenever pairing starts")
 	flagBlockIncoming = flag.Bool("block-incoming", false, "testing: refuse all incoming connections, like a blocking firewall")
+	flagAfterInstall  = flag.Bool("after-install", false, "internal: first start of the freshly installed copy")
 	flagFolder        = flag.String("folder", "", "testing (send): folder key on the phone; skips the window")
 )
 
@@ -74,6 +80,18 @@ func run(args []string) error {
 	}
 
 	// Already running? Hand over to it and stop: there is only ever one LAN Share.
+	// Except when this copy is newer (an update) or was just installed: then the old
+	// copy is asked to quit and this one takes over.
+	if inst, ok := findRunning(dataDir); ok && len(files) == 0 && (*flagAfterInstall || inst.olderThan(buildTime)) {
+		log.Printf("taking over from the running copy (pid %d)", inst.PID)
+		inst.call("/api/quit", nil)
+		for i := 0; i < 50; i++ {
+			if _, still := findRunning(dataDir); !still {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 	if inst, ok := findRunning(dataDir); ok {
 		if len(files) > 0 {
 			if *flagFolder != "" {
@@ -87,6 +105,9 @@ func run(args []string) error {
 		return inst.call("/api/show", nil)
 	}
 
+	if *flagAfterInstall {
+		afterInstall()
+	}
 	a, err := newApp(dataDir, logPath)
 	if err != nil {
 		return err

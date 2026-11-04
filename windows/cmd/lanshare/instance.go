@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -18,6 +19,14 @@ type instance struct {
 	Port  int    `json:"port"`
 	Token string `json:"token"`
 	PID   int    `json:"pid"`
+	Built string `json:"built"` // build time of the running copy (Unix seconds)
+}
+
+// olderThan says whether the running copy was built before mine.
+func (in *instance) olderThan(mine string) bool {
+	a, _ := strconv.ParseInt(in.Built, 10, 64)
+	b, _ := strconv.ParseInt(mine, 10, 64)
+	return b > 0 && a < b
 }
 
 func instanceFile(dataDir string) string { return filepath.Join(dataDir, "instance.json") }

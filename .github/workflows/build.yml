@@ -40,7 +40,7 @@ jobs:
           CGO_ENABLED: "0"
         # -s -w strips debug info: a smaller .exe.
         # -H windowsgui: a windowed app, no console window.
-        run: go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${GITHUB_SHA::7}" -o lanshare.exe ./cmd/lanshare
+        run: go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${GITHUB_SHA::7} -X main.buildTime=$(date +%s)" -o lanshare.exe ./cmd/lanshare
       - uses: actions/upload-artifact@v4
         with:
           name: lanshare-windows
@@ -95,6 +95,12 @@ jobs:
       - name: Run
         shell: bash
         run: node windows/e2e/e2e.js C:/lst/lanshare.exe C:/lst/fakephone.exe e2e-out-win
+      - name: Install and uninstall on real Windows
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          go -C windows build -ldflags "-X main.buildTime=$(date +%s)" -o /c/lst/lanshare-inst.exe ./cmd/lanshare
+          bash .github/scripts/windows-install-check.sh C:/lst/lanshare-inst.exe
       - name: Show the app's log
         if: always()
         shell: bash

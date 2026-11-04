@@ -264,6 +264,11 @@ function render() {
       <p>This laptop can reach the phone, but not the other way round. Windows Firewall is almost certainly blocking LAN Share.</p>
       <button class="btn" data-act="firewall">Allow through firewall</button></div></div>`;
   }
+  if (S.me.canInstall && !sessionStorage.getItem("noInstall")) {
+    b += `<div class="banner info">${icon("desktop")}<div class="grow"><b>Install LAN Share on this PC</b>
+      <p>Adds it to the Start menu and starts it with Windows, so your phone can always send here. You can delete the downloaded file afterwards.</p>
+      <button class="btn" data-act="install">Install</button> <button class="btn ghost" data-act="noinstall">Not now</button></div></div>`;
+  }
   $("banners").innerHTML = b;
 
   // Transfers in progress (and just finished), with time taken.
@@ -395,6 +400,7 @@ function renderSettings(el) {
     <div class="rows">
       <button class="r" data-act="autostart"><span class="grow"><div>Start LAN Share when I sign in</div><div class="t2">So your phone can always send to this laptop</div></span><span class="switch ${S.me.autostart ? "on" : ""}"></span></button>
       <button class="r" data-act="firewall"><span class="ic">${icon("shield")}</span><span class="grow"><div>Allow through Windows Firewall</div><div class="t2">Fixes "phone can't connect to laptop". Windows asks once.</div></span></button>
+      ${S.me.installed ? `<button class="r" data-act="uninstall"><span class="ic">${icon("close")}</span><span class="grow"><div>Uninstall LAN Share</div><div class="t2">Your pairings and settings are kept</div></span></button>` : ""}
       <button class="r" data-act="openlog"><span class="ic">${icon("doc")}</span><span class="grow"><div>Open log file</div><div class="t2">${esc(S.me.logPath)}</div></span></button>
       <div class="r"><span class="ic">${icon("desktop")}</span><span class="grow"><div>${esc(S.me.name)}</div><div class="t2">${esc(S.me.host)}:${S.me.port} · version ${esc(S.me.version)}</div></span></div>
     </div>
@@ -494,6 +500,17 @@ document.addEventListener("click", async (ev) => {
       case "showfile": return api("/api/open", {what: "file", path: t.dataset.path});
       case "firewall": toast("Windows will ask for permission…"); await api("/api/firewall", {}); return toast("Done. Phones can connect to this laptop now.");
       case "openlog": return api("/api/open", {what: "log"});
+      case "noinstall": sessionStorage.setItem("noInstall", "1"); return render();
+      case "install":
+        toast("Installing…");
+        await api("/api/install", {});
+        document.body.innerHTML = `<div class="wrap"><p class="muted">Installed. LAN Share is starting from its new place; this window can be closed.</p></div>`;
+        return;
+      case "uninstall":
+        return openModal({kind: "confirm", title: "Uninstall LAN Share?", ok: "Uninstall",
+          text: "Removes it from this PC, the Start menu and startup. Your phones stay paired if you install it again.",
+          run: async () => { await api("/api/uninstall", {removeData: false});
+            document.body.innerHTML = `<div class="wrap"><p class="muted">LAN Share has been uninstalled. You can close this window.</p></div>`; }});
       case "openfolder": return api("/api/open", {what: "folder", key: t.dataset.key});
       case "share": { const r = await api("/api/pick/folder", {}); await api("/api/folders/add", {path: r.path}); return; }
       case "unshare": return api("/api/folders/remove", {key: t.dataset.key});

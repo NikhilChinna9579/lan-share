@@ -219,7 +219,7 @@ func (a *app) start() error {
 	}
 	a.apiPort = api.Addr().(*net.TCPAddr).Port
 	go serveAPI(a, api)
-	return writeInstance(a.dataDir, instance{Port: a.apiPort, Token: a.token, PID: os.Getpid()})
+	return writeInstance(a.dataDir, instance{Port: a.apiPort, Token: a.token, PID: os.Getpid(), Built: buildTime})
 }
 
 func (a *app) stop() {
@@ -643,6 +643,7 @@ func (a *app) stateJSON() []byte {
 		"me": map[string]any{
 			"name": a.name, "host": a.host, "port": a.port, "version": version,
 			"logPath": a.logPath, "autostart": autostartEnabled(), "platform": platformName(),
+			"installed": isInstalled(), "canInstall": installSupported() && !isInstalled(),
 		},
 		"devices":   orEmpty(devs),
 		"folders":   orEmpty(fl),
