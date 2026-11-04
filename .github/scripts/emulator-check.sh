@@ -48,7 +48,10 @@ PY
   [ -n "$xy" ] || return 1
   A shell input tap $xy
 }
-screen_has() { A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A shell cat /sdcard/ui.xml 2>/dev/null | grep -q "$1"; }
+# Clear any system "isn't responding" dialog that slipped through, then check the screen.
+dismiss_system() { A shell rm -f /sdcard/ui.xml; A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+                   if A shell cat /sdcard/ui.xml 2>/dev/null | grep -q "isn't responding"; then log "note  dismissed a system 'not responding' dialog"; tap_text "Wait"; sleep 1; fi; }
+screen_has() { dismiss_system; A shell rm -f /sdcard/ui.xml; A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A shell cat /sdcard/ui.xml 2>/dev/null | grep -q "$1"; }
 
 cleanup() {
   A logcat -d -b crash > "$OUT/crashes.txt" 2>&1
@@ -62,6 +65,10 @@ trap cleanup EXIT
 # ---------------------------------------------------------------- 1. install, first screen
 A install -r android/app/build/outputs/apk/debug/app-debug.apk >/dev/null && pass "install APK" || fail "install APK"
 A shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null
+# A slow CI emulator sometimes shows "Process system isn't responding" over everything,
+# which hides the app from the checks. Turn those system dialogs off.
+A shell settings put global hide_error_dialogs 1
+A shell settings put global anr_show_background 0
 A forward tcp:47821 tcp:47821   # lets the laptop program reach the phone's receiver
 # Stop at once if the app crashes: no point running the rest.
 crashed() { A logcat -d -b crash 2>/dev/null | grep -q "Process: $PKG"; }
@@ -84,7 +91,7 @@ app 8
 shot 02-shared-folders-after-pairing
 bail_if_crashed "pairing"
 screen_has "Shared folders" && pass "pairing done; shared-folder choice shown" || fail "pairing done; shared-folder choice shown"
-A shell input keyevent KEYCODE_BACK; sleep 1
+tap_text "Done" || A shell input keyevent KEYCODE_BACK; sleep 1
 until_ok 20 "state | grep -q '\"status\":\"online\"'" && pass "laptop sees the phone online" || fail "laptop sees the phone online"
 until_ok 30 "screen_has 'Online · '" && pass "phone sees the laptop online" || fail "phone sees the laptop online"
 shot 03-home-online
