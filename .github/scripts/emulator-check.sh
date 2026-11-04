@@ -14,7 +14,9 @@ T0=$(date +%s)
 
 log()  { echo "[$(( $(date +%s) - T0 ))s] $*" | tee -a "$OUT/RESULTS.txt"; }
 pass() { log "ok    $*"; }
-fail() { log "FAIL  $*"; FAILS=$((FAILS + 1)); }
+fail() { log "FAIL  $*"; FAILS=$((FAILS + 1))
+         timeout 20 adb exec-out screencap -p > "$OUT/FAIL-$FAILS.png" 2>/dev/null   # what the screen showed
+         A shell uiautomator dump /sdcard/fail.xml >/dev/null 2>&1; A pull /sdcard/fail.xml "$OUT/FAIL-$FAILS.xml" >/dev/null 2>&1; }
 A()    { timeout 30 adb "$@"; }                                   # adb, never more than 30 s
 shot() { sleep 1; timeout 20 adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null || true; }
 app()  { A shell am force-stop $PKG; A shell am start -n $PKG/.MainActivity >/dev/null; sleep "${1:-5}"; }
@@ -58,6 +60,7 @@ cleanup() {
   A logcat -d > "$OUT/logcat-full.txt" 2>&1
   grep -E "lanshare|AndroidRuntime" "$OUT/logcat-full.txt" | tail -400 > "$OUT/logcat.txt"
   cp "$LAPTOP_DATA/lanshare.log" "$OUT/laptop-lanshare.log" 2>/dev/null
+  grep -E " LanShare *:" "$OUT/logcat-full.txt" > "$OUT/app-log.txt"
   kill "$LAPTOP_PID" 2>/dev/null
 }
 trap cleanup EXIT
@@ -90,7 +93,7 @@ hook test_pair.txt "$(python3 -c "import json;q=json.load(open('$WORK/pair.json'
 app 8
 shot 02-shared-folders-after-pairing
 bail_if_crashed "pairing"
-screen_has "Shared folders" && pass "pairing done; shared-folder choice shown" || fail "pairing done; shared-folder choice shown"
+until_ok 30 "screen_has 'Shared folders'" && pass "pairing done; shared-folder choice shown" || fail "pairing done; shared-folder choice shown"
 tap_text "Done" || A shell input keyevent KEYCODE_BACK; sleep 1
 until_ok 20 "state | grep -q '\"status\":\"online\"'" && pass "laptop sees the phone online" || fail "laptop sees the phone online"
 until_ok 30 "screen_has 'Online · '" && pass "phone sees the laptop online" || fail "phone sees the laptop online"

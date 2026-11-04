@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.text.format.DateUtils
 import android.view.LayoutInflater
 import android.view.View
@@ -394,6 +395,7 @@ class MainActivity : Activity() {
         showCard(Kind.WORKING, "Pairing…", "Talking to the laptop")
         worker.execute {
             val result = runCatching { Identity.ensure(myName); Client.pair(this, qrText, myName) }
+            Log.i(TAG, "pair: " + result.map { "ok with ${it.name}" }.getOrElse { "failed: $it" })
             ui {
                 result.onSuccess {
                     showCard(Kind.DONE, "Paired with ${it.name}", "You won't need to scan again.")
@@ -524,8 +526,10 @@ class MainActivity : Activity() {
      * Requirement: when no folder was named, always ask.
      */
     private fun chooseFolder(d: Device, uris: List<Uri>) {
+        Log.i(TAG, "chooseFolder: ${uris.size} file(s) for ${d.name} at ${d.host}:${d.port}")
         worker.execute {
             val items = runCatching { Client.resolveFiles(this, uris) }.getOrElse {
+                Log.w(TAG, "resolveFiles failed", it)
                 ui { showCard(Kind.ERROR, "Couldn't read that file", it.message ?: "") }
                 return@execute
             }
@@ -535,6 +539,7 @@ class MainActivity : Activity() {
                 sheet.show()
                 worker.execute {
                     val r = runCatching { Client.folders(DeviceStore.get(this, d.id) ?: d, myName) }
+                    Log.i(TAG, "folders from ${d.name}: " + r.map { it.second.joinToString { f -> f.label } }.getOrElse { "failed: $it" })
                     ui {
                         r.onFailure { sheet.dismiss(); showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(it, d), device = d.id) }
                         r.onSuccess { (defaultKey, roots) -> showRoots(sheet, d, items, defaultKey, roots) }
@@ -569,6 +574,7 @@ class MainActivity : Activity() {
         sheet.message("Loading…")
         worker.execute {
             val r = runCatching { Client.list(DeviceStore.get(this, d.id) ?: d, myName, folder.key, path.joinToString("/")) }
+            Log.i(TAG, "list ${folder.label}/${path.joinToString("/")}: " + r.map { it.size.toString() + " subfolders" }.getOrElse { "failed: $it" })
             ui {
                 if (!sheet.isShowing) return@ui
                 sheet.clear()
@@ -603,6 +609,7 @@ class MainActivity : Activity() {
                 }
             }
             val again = { send(d, folder, path, where, items) }
+            Log.i(TAG, "send to ${d.name}: " + result.map { "ok" }.getOrElse { "failed: $it" })
             result.onSuccess {
                 Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.DONE; t.sent = total; t.files = items.size; t.cancel = null }
                 val took = Hub.get(id)?.elapsed ?: 0
@@ -658,6 +665,7 @@ class MainActivity : Activity() {
         File(filesDir, "demo.txt").takeIf { it.exists() }?.let { f ->
             val mode = f.readText().trim()
             f.delete()
+            Log.i(TAG, "test hook: $mode")
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
             when (mode) {
                 "add_offline" -> { DeviceStore.put(this, Device("0".repeat(64), "Office PC", "10.0.2.99", Protocol.DEFAULT_PORT, 0)); render() }
@@ -687,6 +695,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        const val TAG = "LanShare"
         private const val REQUEST_PICK = 1
         private const val REQUEST_NOTIFY = 2
         private const val REQUEST_TREE = 3

@@ -109,6 +109,7 @@ class Presence(private val ctx: Context, private val myName: String, private val
 
     private fun set(id: String, s: Status) {
         val old = statuses.put(id, s)
+        if (old?.state != s.state) android.util.Log.i("LanShare", "presence: $id ${old?.state} -> ${s.state} ${s.host ?: ""}")
         if (old?.state != s.state || old.host != s.host) main.post(onChange)
     }
 
