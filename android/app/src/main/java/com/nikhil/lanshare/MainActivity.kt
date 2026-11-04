@@ -62,6 +62,11 @@ class MainActivity : Activity() {
     private val hideCard = Runnable { card.visibility = View.GONE; cardDevice = null }
     private val onHub: () -> Unit = { renderLive() }
 
+    /** Runs on the main thread, but only if this screen is still alive. */
+    private fun ui(block: () -> Unit) {
+        ui { if (!isFinishing && !isDestroyed) block() }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -99,7 +104,16 @@ class MainActivity : Activity() {
         ReceiveService.start(this)
         render()
         handleShare(intent)
-        runTestHooks()
+    }
+
+    private var hooksRan = false
+
+    override fun onResume() {
+        super.onResume()
+        if (!hooksRan) {
+            hooksRan = true
+            ui { runTestHooks() } // after the screen is fully up
+        }
     }
 
     override fun onStart() {
@@ -352,7 +366,7 @@ class MainActivity : Activity() {
         showCard(Kind.WORKING, "Pairing…", "Talking to the laptop")
         worker.execute {
             val result = runCatching { Identity.ensure(myName); Client.pair(this, qrText, myName) }
-            main.post {
+            ui {
                 result.onSuccess {
                     showCard(Kind.DONE, "Paired with ${it.name}", "You won't need to scan again.")
                     Hub.add("paired", "Paired with ${it.name}")
@@ -484,16 +498,16 @@ class MainActivity : Activity() {
     private fun chooseFolder(d: Device, uris: List<Uri>) {
         worker.execute {
             val items = runCatching { Client.resolveFiles(this, uris) }.getOrElse {
-                main.post { showCard(Kind.ERROR, "Couldn't read that file", it.message ?: "") }
+                ui { showCard(Kind.ERROR, "Couldn't read that file", it.message ?: "") }
                 return@execute
             }
-            main.post {
+            ui {
                 val sheet = Sheet(this, "Save on ${d.name}", "${plural(items.size, "file")} · ${formatSize(items.sumOf { it.size })}")
                 sheet.message("Asking ${d.name} for its folders…")
                 sheet.show()
                 worker.execute {
                     val r = runCatching { Client.folders(DeviceStore.get(this, d.id) ?: d, myName) }
-                    main.post {
+                    ui {
                         r.onFailure { sheet.dismiss(); showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(it, d), device = d.id) }
                         r.onSuccess { (defaultKey, roots) -> showRoots(sheet, d, items, defaultKey, roots) }
                     }
@@ -527,8 +541,8 @@ class MainActivity : Activity() {
         sheet.message("Loading…")
         worker.execute {
             val r = runCatching { Client.list(DeviceStore.get(this, d.id) ?: d, myName, folder.key, path.joinToString("/")) }
-            main.post {
-                if (!sheet.isShowing) return@post
+            ui {
+                if (!sheet.isShowing) return@ui
                 sheet.clear()
                 val dirs = r.getOrElse { emptyList() }
                 if (r.isFailure) sheet.message("Couldn't list this folder: ${friendly(r.exceptionOrNull()!!, d)}")

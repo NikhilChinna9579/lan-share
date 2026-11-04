@@ -95,8 +95,8 @@ A shell cmd statusbar expand-notifications; sleep 2; shot 05-notification; A she
 
 # ---------------------------------------------------------------- 4. phone -> laptop, through the app's send flow
 hook demo.txt send_test; app 6
-shot 06-save-on-laptop
-if until_ok 10 "screen_has 'Pictures'"; then
+if until_ok 20 "screen_has 'Pictures'"; then
+  shot 06-save-on-laptop
   tap_text "Pictures"; sleep 3; shot 07-browse-pictures
   tap_text "Save here" && pass "picked a folder on the laptop" || fail "tap Save here"
   until_ok 25 "[ -f '$HOME/Pictures/IMG_2041.jpg' ]" && pass "phone sent a file to the laptop" || fail "phone sent a file to the laptop"

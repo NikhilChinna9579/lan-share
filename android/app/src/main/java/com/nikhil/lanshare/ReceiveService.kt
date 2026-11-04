@@ -49,6 +49,7 @@ class ReceiveService : Service() {
             startForeground(ID_READY, ready)
         }
         running = true
+        Hub.changed() // the app's "Ready to receive" updates right away
 
         val name = deviceName(this)
         runCatching {
