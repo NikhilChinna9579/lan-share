@@ -51,7 +51,29 @@ type FileOffer struct {
 	Type       string      `json:"type"` // "file_offer"
 	TransferID string      `json:"transfer_id"`
 	Folder     string      `json:"folder"`
+	Path       string      `json:"path,omitempty"` // subfolder inside Folder, "/"-separated
 	Files      []OfferFile `json:"files"`
+}
+
+// ListRequest asks what is inside a shared folder (or a subfolder of it).
+type ListRequest struct {
+	Type   string `json:"type"` // "list_request"
+	Folder string `json:"folder"`
+	Path   string `json:"path,omitempty"`
+}
+
+type ListFile struct {
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified int64  `json:"modified"` // Unix milliseconds
+}
+
+type ListResponse struct {
+	Type   string     `json:"type"` // "list_response"
+	Folder string     `json:"folder"`
+	Path   string     `json:"path"`
+	Dirs   []string   `json:"dirs"`
+	Files  []ListFile `json:"files"`
 }
 
 type FileAccept struct {

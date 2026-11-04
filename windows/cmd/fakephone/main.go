@@ -30,6 +30,8 @@ func main() {
 	pairFile := flag.String("pair", "", "pair using this file holding the laptop's QR text")
 	name := flag.String("name", "Test phone", "phone name")
 	port := flag.Int("port", 47821, "port to receive on")
+	sendFile := flag.String("send", "", "after starting, send this file to the paired laptop (Downloads)")
+	cantReach := flag.Bool("cant-reach", false, "pretend this phone can't connect to the laptop (firewall test)")
 	flag.Parse()
 
 	id, err := identity.LoadOrCreate(*data, *name)
@@ -50,11 +52,30 @@ func main() {
 		log.Printf("paired with %s", qr.Name)
 	}
 
+	if *sendFile != "" {
+		go func() {
+			time.Sleep(time.Second)
+			for _, d := range ts.List() {
+				c, err := client.Dial(d.Addr, d.ID, id, *name, 5*time.Second)
+				if err != nil {
+					log.Printf("send: %v", err)
+					continue
+				}
+				saved, err := c.SendFiles(fmt.Sprint(time.Now().UnixNano()), "downloads", "", []string{*sendFile}, nil)
+				c.Close()
+				log.Printf("sent to %s: %v %v", d.Name, saved, err)
+			}
+		}()
+	}
 	srv := &server.Server{Name: *name, Identity: id, Trust: ts, Folders: folders, OnEvent: func(e server.Event) {
 		if e.Kind == server.EventReceived {
 			log.Printf("received %s (%d bytes) from %s", e.Path, e.Bytes, e.Device)
 		}
 	}}
+	if *cantReach {
+		no := false
+		srv.ReportReach = &no
+	}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	check(err)
 	if node, err := mdns.Start(&mdns.Service{Instance: *name, Host: "fakephone", Port: *port,

@@ -1,4 +1,5 @@
-// Package files handles where received files go and how they are named safely.
+// Package files handles shared folders (where received files go, what can be browsed)
+// and how received files are named safely.
 package files
 
 import (
@@ -8,65 +9,6 @@ import (
 	"strings"
 	"unicode"
 )
-
-// Folders maps the folder keys we offer (PROTOCOL.md "Folders") to real paths.
-// Senders only ever send a key, so they can't write anywhere else.
-type Folders struct {
-	Default string
-	paths   map[string]string
-	labels  map[string]string
-	order   []string
-}
-
-// NewFolders returns an empty set whose default is defaultKey.
-func NewFolders(defaultKey string) *Folders {
-	return &Folders{Default: defaultKey, paths: map[string]string{}, labels: map[string]string{}}
-}
-
-// UserFolders returns the standard folders under the user's home directory.
-func UserFolders() (*Folders, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	f := NewFolders("downloads")
-	for _, e := range []struct{ key, label, dir string }{
-		{"downloads", "Downloads", "Downloads"},
-		{"documents", "Documents", "Documents"},
-		{"pictures", "Pictures", "Pictures"},
-		{"desktop", "Desktop", "Desktop"},
-	} {
-		f.Add(e.key, e.label, filepath.Join(home, e.dir))
-	}
-	return f, nil
-}
-
-// Add registers a folder key.
-func (f *Folders) Add(key, label, path string) {
-	if _, ok := f.paths[key]; !ok {
-		f.order = append(f.order, key)
-	}
-	f.paths[key] = path
-	f.labels[key] = label
-}
-
-// Path resolves a key; ok is false for unknown keys.
-func (f *Folders) Path(key string) (string, bool) {
-	if key == "" {
-		key = f.Default
-	}
-	p, ok := f.paths[key]
-	return p, ok
-}
-
-// List returns keys and labels in display order.
-func (f *Folders) List() (keys, labels []string) {
-	for _, k := range f.order {
-		keys = append(keys, k)
-		labels = append(labels, f.labels[k])
-	}
-	return
-}
 
 var reserved = map[string]bool{
 	"CON": true, "PRN": true, "AUX": true, "NUL": true,

@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LAN Share</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='11' fill='%232563eb'/%3E%3Cg transform='translate(6.8 6.8) scale(1.1)' fill='%23fff'%3E%3Cpath d='M6.99 11 3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg:#f5f6fa; --surface:#fff; --line:#e3e6ee; --ink:#12141a; --mute:#5d6371; --faint:#8a90a0;
+    --brand:#2563eb; --on-brand:#fff; --brand-soft:#e1e9ff; --on-brand-soft:#0b2a6b;
+    --ok:#16a34a; --ok-soft:#dcf5e5; --warn:#b7791f; --warn-soft:#fdf2d8; --bad:#dc2626; --bad-soft:#fde8e8;
+    --off:#a3a9b6; --track:#e3e6ee; --shadow:0 1px 2px rgba(16,24,40,.04);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0f1115; --surface:#1a1d24; --line:#2a2e38; --ink:#eceef3; --mute:#a0a6b3; --faint:#767c8a;
+      --brand:#8ab4ff; --on-brand:#0a1f4d; --brand-soft:#1e3a75; --on-brand-soft:#dce6ff;
+      --ok:#4ade80; --ok-soft:#16301f; --warn:#facc15; --warn-soft:#3a3010; --bad:#f87171; --bad-soft:#3b1a1a;
+      --off:#6b7280; --track:#2a2e38; --shadow:none;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif; }
+  body { min-height:100vh; }
+  button { font:inherit; color:inherit; cursor:pointer; border:0; background:none; }
+  button:disabled { cursor:default; opacity:.45; }
+  button:focus:not(:focus-visible) { outline:none; }
+  .wrap { max-width:560px; margin:0 auto; padding:20px 20px 32px; }
+  svg.i { width:20px; height:20px; fill:currentColor; flex:none; }
+
+  header { display:flex; align-items:center; gap:14px; padding:4px 0 18px; }
+  .logo { width:42px; height:42px; border-radius:12px; background:var(--brand); display:grid; place-items:center; color:var(--on-brand); flex:none; }
+  .logo svg { width:24px; height:24px; }
+  .title { flex:1; min-width:0; }
+  .title h1 { font-size:20px; font-weight:600; margin:0; }
+  .sub { color:var(--mute); font-size:13px; display:flex; align-items:center; gap:7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--off); flex:none; }
+  .dot.online { background:var(--ok); } .dot.checking { background:var(--warn); } .dot.warn { background:var(--warn); }
+  .iconbtn { width:40px; height:40px; border-radius:50%; display:grid; place-items:center; color:var(--mute); }
+  .iconbtn:hover { background:var(--line); color:var(--ink); }
+
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px; padding:0 18px;
+    border-radius:999px; font-weight:600; background:var(--brand); color:var(--on-brand); white-space:nowrap; }
+  .btn:hover:not(:disabled) { filter:brightness(1.07); }
+  .btn.tonal { background:var(--brand-soft); color:var(--on-brand-soft); }
+  .btn.ghost { background:none; color:var(--brand); padding:0 12px; }
+  .btn.ghost:hover { background:var(--brand-soft); }
+  .btn.danger { background:var(--bad-soft); color:var(--bad); }
+  .btn.big { height:48px; width:100%; font-size:15px; }
+  .btn svg.i { width:18px; height:18px; }
+
+  h2 { font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); margin:22px 4px 10px; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:20px; box-shadow:var(--shadow); }
+
+  .banner { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border-radius:16px; margin-bottom:10px; }
+  .banner.warn { background:var(--warn-soft); } .banner.bad { background:var(--bad-soft); } .banner.info { background:var(--brand-soft); }
+  .banner b { display:block; } .banner p { margin:2px 0 8px; color:var(--mute); font-size:13px; }
+  .banner .btn { height:34px; padding:0 14px; font-size:13px; }
+
+  .tr { padding:14px 16px; margin-bottom:10px; }
+  .tr .row { display:flex; align-items:center; gap:12px; }
+  .badge { width:40px; height:40px; border-radius:50%; display:grid; place-items:center; flex:none; background:var(--brand-soft); color:var(--on-brand-soft); }
+  .badge.ok { background:var(--ok-soft); color:var(--ok); } .badge.bad { background:var(--bad-soft); color:var(--bad); }
+  .grow { flex:1; min-width:0; }
+  .t1 { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .t2 { color:var(--mute); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bar { height:6px; border-radius:3px; background:var(--track); margin-top:12px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--brand); border-radius:3px; transition:width .2s; }
+
+  .dev { display:flex; align-items:center; gap:14px; padding:14px 14px 14px 16px; margin-bottom:10px; }
+  .avatar { position:relative; width:48px; height:48px; border-radius:50%; background:var(--brand-soft); color:var(--on-brand-soft); display:grid; place-items:center; flex:none; }
+  .avatar svg { width:24px; height:24px; }
+  .avatar .dot { position:absolute; right:-1px; bottom:-1px; width:15px; height:15px; border:2.5px solid var(--surface); }
+
+  .empty { padding:28px 24px 24px; text-align:center; }
+  .empty h3 { margin:16px 0 4px; font-size:19px; font-weight:600; }
+  .empty p { margin:0 auto 18px; color:var(--mute); max-width:340px; }
+
+  .act { padding:4px 0; }
+  .act .item { display:flex; gap:12px; padding:10px 16px; align-items:flex-start; }
+  .act .item + .item { border-top:1px solid var(--line); }
+  .act .ic { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; flex:none; background:var(--brand-soft); color:var(--on-brand-soft); }
+  .act .ic svg { width:16px; height:16px; }
+  .act .ic.ok { background:var(--ok-soft); color:var(--ok); } .act .ic.bad { background:var(--bad-soft); color:var(--bad); }
+  .act .ic.off { background:var(--track); color:var(--mute); }
+  .act time { color:var(--faint); font-size:12px; white-space:nowrap; padding-top:2px; }
+  .act .link { color:var(--brand); font-size:13px; padding:0; }
+  .muted { color:var(--mute); text-align:center; padding:18px; font-size:13px; }
+
+  /* Modal sheet */
+  .modal { position:fixed; inset:0; background:rgba(10,12,18,.45); display:flex; align-items:flex-end; justify-content:center; z-index:10; animation:fade .15s; }
+  .sheet { background:var(--surface); width:100%; max-width:560px; max-height:92vh; overflow:auto; border-radius:24px 24px 0 0; padding:8px 20px 20px; animation:up .2s ease-out; }
+  @media (min-height:700px) { .modal { align-items:center; } .sheet { border-radius:24px; max-height:86vh; margin:16px; } }
+  @keyframes up { from { transform:translateY(24px); opacity:0; } }
+  @keyframes fade { from { opacity:0; } }
+  .sheet .head { display:flex; align-items:center; gap:8px; padding:8px 0 4px; position:sticky; top:-8px; background:var(--surface); z-index:1; }
+  .sheet .head h3 { flex:1; margin:0; font-size:19px; font-weight:600; }
+  .sheet .lead { color:var(--mute); margin:0 0 14px; }
+  .label { font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--mute); margin:18px 2px 8px; }
+  .rows { border:1px solid var(--line); border-radius:16px; overflow:hidden; }
+  .r { display:flex; align-items:center; gap:12px; padding:11px 14px; width:100%; text-align:left; }
+  .r + .r { border-top:1px solid var(--line); }
+  button.r:hover:not(:disabled) { background:var(--bg); }
+  .r .ic { width:36px; height:36px; border-radius:50%; background:var(--brand-soft); color:var(--on-brand-soft); display:grid; place-items:center; flex:none; }
+  .r .ic svg { width:19px; height:19px; }
+  .r.sel { background:var(--brand-soft); }
+  .chip { font-size:12px; font-weight:600; padding:2px 10px; border-radius:999px; background:var(--brand-soft); color:var(--on-brand-soft); }
+  .chev { color:var(--faint); }
+  .crumbs { display:flex; flex-wrap:wrap; align-items:center; gap:2px; margin:0 0 8px; font-size:13px; }
+  .crumbs button { padding:4px 8px; border-radius:8px; color:var(--brand); font-weight:600; }
+  .crumbs button:hover { background:var(--brand-soft); }
+  .crumbs span { color:var(--faint); }
+  .devpick { display:flex; flex-wrap:wrap; gap:8px; }
+  .devpick button { display:flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px; border:1px solid var(--line); }
+  .devpick button.sel { background:var(--brand); color:var(--on-brand); border-color:var(--brand); }
+  .qr { width:240px; height:240px; margin:8px auto 12px; padding:10px; background:#fff; border-radius:16px; border:1px solid var(--line); }
+  .qr img { width:100%; height:100%; image-rendering:pixelated; display:block; }
+  .code { text-align:center; font:600 24px/1 "Cascadia Mono",Consolas,monospace; letter-spacing:.3em; }
+  .center { text-align:center; } .small { font-size:13px; color:var(--mute); }
+  ol.steps { color:var(--mute); padding-left:20px; margin:16px 0 0; }
+  .switch { position:relative; width:42px; height:24px; border-radius:12px; background:var(--track); flex:none; transition:background .15s; }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s; box-shadow:0 1px 2px rgba(0,0,0,.3); }
+  .switch.on { background:var(--brand); } .switch.on::after { left:21px; }
+  .foot { display:flex; gap:10px; margin-top:18px; }
+  .foot .btn { flex:1; height:46px; }
+  .error { color:var(--bad); font-size:13px; margin-top:10px; }
+  .drop { position:fixed; inset:12px; border:3px dashed var(--brand); border-radius:24px; background:color-mix(in srgb, var(--bg) 85%, transparent);
+    display:grid; place-items:center; font-size:18px; font-weight:600; color:var(--brand); z-index:20; pointer-events:none; }
+  .gone { display:none !important; }
+  .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:12px; font-size:13px; z-index:30; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.99 11 3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg></div>
+    <div class="title">
+      <h1 id="name">LAN Share</h1>
+      <div class="sub"><span class="dot" id="hdot"></span><span id="hsub">Connecting…</span></div>
+    </div>
+    <button class="btn" id="sendBtn"><svg class="i" viewBox="0 0 24 24"><use href="#i-send"/></svg>Send files</button>
+    <button class="iconbtn" id="settingsBtn" title="Settings"><svg class="i" viewBox="0 0 24 24"><use href="#i-settings"/></svg></button>
+  </header>
+
+  <div id="banners"></div>
+  <div id="transfers"></div>
+
+  <h2 id="phonesLabel">Your phones</h2>
+  <div id="devices"></div>
+
+  <h2>Recent activity</h2>
+  <div class="card act" id="activity"></div>
+</div>
+
+<div id="modal" class="modal gone"><div class="sheet" id="sheet"></div></div>
+<div id="drop" class="drop gone">Drop files to send them to your phone</div>
+<div id="toast" class="toast gone"></div>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M3.4 20.4l17.45-7.48c.81-.35.81-1.49 0-1.84L3.4 3.6c-.66-.29-1.39.2-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M16 1H8C6.34 1 5 2.34 5 4v16c0 1.66 1.34 3 3 3h8c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3zm-2 20h-4v-1h4v1zm3.25-3H6.75V4h10.5v14z"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+    <symbol id="i-error" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></symbol>
+    <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M12 6c3.33 0 6.4 1.15 8.83 3.07L23 6.9C19.97 4.47 16.14 3 12 3c-1.27 0-2.5.14-3.69.4l2.62 2.62C11.29 6 11.64 6 12 6zm7.1 6.24C17.81 11.24 16.3 10.5 14.67 10.1l3.09 3.09 1.34-.95zM2.81 2.81 1.39 4.22l2.65 2.65C2.98 7.48 1.98 8.15 1 8.9l2.17 2.17c.94-.73 1.96-1.36 3.04-1.85l2.26 2.26c-1.14.42-2.18 1.04-3.1 1.82l2.12 2.12a7.94 7.94 0 0 1 3.39-1.73l2.55 2.55c-.79-.15-1.6-.05-2.31.31L12 19l1.59-1.59 6.19 6.19 1.41-1.41L2.81 2.81z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></symbol>
+    <symbol id="i-desktop" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-3v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 12H4V4h16v10z"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
+    <symbol id="i-add" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><path d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zm0 10h2v2h-2zm-6-6h2v2h-2zm2 2h2v2h-2zm-2 2h2v2h-2zm2 2h2v2h-2zm2-2h2v2h-2zm0-4h2v2h-2zm2 2h2v2h-2z"/></symbol>
+  </defs>
+</svg>
+
+<script>
+"use strict";
+const token = new URLSearchParams(location.hash.slice(1)).get("t") || "";
+let S = null;                 // latest state from LAN Share
+let modal = null;             // which sheet is open: {kind, ...}
+let seenPending = null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const icon = (n) => `<svg class="i" viewBox="0 0 24 24"><use href="#i-${n}"/></svg>`;
+
+async function api(path, body, method) {
+  const r = await fetch(path, {
+    method: method || (body === undefined ? "GET" : "POST"),
+    headers: {"X-Token": token, "Content-Type": "application/json"},
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.remove("gone");
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add("gone"), 3500);
+}
+
+function size(n) {
+  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(2) + " GB";
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
+  if (n >= 1 << 10) return Math.round(n / 1024) + " KB";
+  return n + " B";
+}
+function ago(t) {
+  const d = (Date.now() - new Date(t).getTime()) / 1000;
+  if (d < 45) return "just now";
+  if (d < 3600) return Math.round(d / 60) + " min ago";
+  return new Date(t).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+}
+const folderIcon = (k) => ({downloads:"down", documents:"doc", pictures:"image", desktop:"desktop", videos:"video", music:"music", camera:"camera", movies:"video"})[k] || "folder";
+
+// ------------------------------------------------------------- live connection
+function connect() {
+  const es = new EventSource("/api/events?t=" + encodeURIComponent(token));
+  es.addEventListener("state", (e) => { S = JSON.parse(e.data); render(); });
+  es.addEventListener("focus", () => window.focus());
+  es.onerror = () => {
+    $("hdot").className = "dot"; $("hsub").textContent = "Reconnecting to LAN Share…";
+  };
+}
+
+// ------------------------------------------------------------- main screen
+function render() {
+  if (!S) return;
+  $("name").textContent = S.me.name;
+  const online = S.devices.filter((d) => d.status === "online").length;
+  $("hdot").className = "dot online";
+  $("hsub").textContent = `Ready to receive · ${S.me.host}` + (S.devices.length ? ` · ${online} of ${S.devices.length} online` : "");
+  document.title = "LAN Share";
+
+  // Banners: problems worth fixing, with the fix right there.
+  let b = "";
+  for (const d of S.devices.filter((d) => d.cantReachUs && d.status === "online")) {
+    b += `<div class="banner warn">${icon("shield")}<div class="grow"><b>${esc(d.name)} can't connect to this laptop</b>
+      <p>This laptop can reach the phone, but not the other way round. Windows Firewall is almost certainly blocking LAN Share.</p>
+      <button class="btn" data-act="firewall">Allow through firewall</button></div></div>`;
+  }
+  $("banners").innerHTML = b;
+
+  // Transfers in progress (and just finished).
+  $("transfers").innerHTML = S.transfers.map((t) => {
+    const pct = t.total ? Math.min(100, (t.sent / t.total) * 100) : (t.state === "done" ? 100 : 0);
+    const inbound = t.dir === "in";
+    let cls = "", ic = inbound ? "down" : "up", title, sub;
+    if (t.state === "running") {
+      title = `${inbound ? "Receiving" : "Sending"} ${esc(t.name || "…")}`;
+      sub = `${inbound ? "From" : "To"} ${esc(t.device)} · ${size(t.sent)} of ${size(t.total)}` + (t.speed ? ` · ${size(t.speed)}/s` : "");
+    } else if (t.state === "done") {
+      cls = "ok"; ic = "check";
+      title = `${inbound ? "Received" : "Sent"} ${t.files > 1 ? t.files + " files" : esc(t.name)}`;
+      sub = `${inbound ? "From" : "To"} ${esc(t.device)}` + (t.folder ? ` · in ${esc(t.folder)}` : "") + ` · ${size(t.total)}`;
+    } else {
+      cls = "bad"; ic = "error";
+      title = `${inbound ? "Receiving from" : "Couldn't send to"} ${esc(t.device)}`;
+      sub = esc(t.message || "Something went wrong");
+    }
+    return `<div class="card tr"><div class="row"><div class="badge ${cls}">${icon(ic)}</div>
+      <div class="grow"><div class="t1">${title}</div><div class="t2" title="${sub}">${sub}</div></div></div>
+      ${t.state === "running" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</div>`;
+  }).join("");
+
+  // Phones.
+  $("phonesLabel").classList.toggle("gone", !S.devices.length);
+  if (!S.devices.length) {
+    $("devices").innerHTML = `<div class="card empty">
+      <svg width="180" height="100" viewBox="0 0 200 112"><circle cx="56" cy="56" r="44" fill="var(--brand-soft)"/><circle cx="146" cy="56" r="50" fill="var(--brand-soft)"/>
+      <g transform="translate(26 20) scale(3)" fill="var(--brand)"><path d="M16 1H8C6.34 1 5 2.34 5 4v16c0 1.66 1.34 3 3 3h8c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3zm-2 20h-4v-1h4v1zm3.25-3H6.75V4h10.5v14z"/></g>
+      <circle cx="90" cy="56" r="3" fill="var(--brand)"/><circle cx="100" cy="56" r="3" fill="var(--brand)" opacity=".6"/><circle cx="110" cy="56" r="3" fill="var(--brand)" opacity=".35"/>
+      <g transform="translate(117 16) scale(3.3)" fill="var(--brand)"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></g></svg>
+      <h3>Pair your phone</h3><p>You only do this once. After that they find each other by themselves, even when Wi-Fi addresses change.</p>
+      <button class="btn big" data-act="pair">${icon("qr")}Show pairing code</button></div>`;
+  } else {
+    $("devices").innerHTML = S.devices.map((d) => {
+      let dot = d.status, line;
+      if (d.cantReachUs && d.status === "online") { dot = "warn"; line = "Online · can't connect back (firewall)"; }
+      else if (d.status === "online") line = `Online · ${esc(d.addr)}`;
+      else if (d.status === "checking") line = "Looking for it on the Wi-Fi…";
+      else line = "Offline" + (d.lastSeen && !d.lastSeen.startsWith("0001") ? " · seen " + ago(d.lastSeen) : " · open LAN Share on the phone");
+      return `<div class="card dev"><div class="avatar">${icon("phone")}<span class="dot ${dot}"></span></div>
+        <div class="grow"><div class="t1">${esc(d.name)}</div><div class="t2">${line}</div></div>
+        <button class="btn tonal" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>${icon("send")}Send</button>
+        <button class="iconbtn" data-act="devmenu" data-id="${d.id}" title="More">${icon("more")}</button></div>`;
+    }).join("") + `<div class="center"><button class="btn ghost" data-act="pair">${icon("add")}Pair another phone</button></div>`;
+  }
+
+  // Activity, newest first.
+  const kinds = {received:["down","ok"], sent:["up","ok"], paired:["link",""], online:["phone","ok"], offline:["phone","off"], error:["error","bad"], info:["info",""]};
+  $("activity").innerHTML = S.activity.length ? S.activity.slice(0, 30).map((a) => {
+    const [ic, cls] = kinds[a.kind] || ["info", ""];
+    return `<div class="item"><div class="ic ${cls}">${icon(ic)}</div><div class="grow"><div>${esc(a.text)}</div>
+      ${a.detail ? `<div class="t2" title="${esc(a.detail)}">${esc(a.detail)}</div>` : ""}
+      ${a.path ? `<button class="link" data-act="showfile" data-path="${esc(a.path)}">Show in folder</button>` : ""}</div>
+      <time>${ago(a.time)}</time></div>`;
+  }).join("") : `<div class="muted">Nothing yet. Files you send and receive show up here.</div>`;
+
+  $("sendBtn").disabled = !S.devices.some((d) => d.status === "online");
+
+  // Files handed over from Explorer ("Send to") open the send sheet.
+  if (seenPending === null) seenPending = S.pending.n - (S.pending.files.length ? 1 : 0);
+  if (S.pending.n !== seenPending) {
+    seenPending = S.pending.n;
+    if (S.pending.files.length) openSend({files: S.pending.files});
+  }
+  if (modal) renderModal();
+}
+
+// ------------------------------------------------------------- sheets
+function openModal(m) { modal = m; $("modal").classList.remove("gone"); renderModal(); }
+function closeModal() {
+  if (modal && modal.kind === "pair") api("/api/pair/close", {}).catch(() => {});
+  modal = null; $("modal").classList.add("gone"); $("sheet").innerHTML = "";
+}
+function head(title) { return `<div class="head"><h3>${title}</h3><button class="iconbtn" data-act="close" title="Close">${icon("close")}</button></div>`; }
+
+function renderModal() {
+  const m = modal, el = $("sheet");
+  if (m.kind === "pair") {
+    const p = S.pairing;
+    if (p && p.paired) {
+      el.innerHTML = head("Paired") + `<div class="center" style="padding:16px 0 8px"><div class="badge ok" style="width:64px;height:64px;margin:0 auto">${icon("check")}</div>
+        <h3 style="margin:14px 0 4px">Paired with ${esc(p.paired)}</h3><p class="small">They'll find each other by themselves from now on.</p></div>
+        <div class="foot"><button class="btn" data-act="close">Done</button></div>`;
+      return;
+    }
+    if (!p) { el.innerHTML = head("Pair a phone") + `<p class="muted">Getting a code…</p>`; return; }
+    const left = Math.max(0, Math.round((new Date(p.expires) - Date.now()) / 1000));
+    el.innerHTML = head("Pair a phone") + `<p class="lead">On your phone, open <b>LAN Share</b>, tap <b>Scan QR code</b> and point it at this code.</p>
+      <div class="qr"><img alt="Pairing code" src="${p.qr}"></div><div class="code">${esc(p.code)}</div>
+      <p class="center small">${left > 0 ? `Valid for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : `Expired. <button class="link btn ghost" data-act="pair">New code</button>`}</p>`;
+    return;
+  }
+  if (m.kind === "settings") return renderSettings(el);
+  if (m.kind === "send") return renderSend(el);
+  if (m.kind === "confirm") {
+    el.innerHTML = head(esc(m.title)) + `<p class="lead">${esc(m.text)}</p><div class="foot">
+      <button class="btn tonal" data-act="close">Cancel</button><button class="btn danger" data-act="confirmok">${esc(m.ok)}</button></div>`;
+    return;
+  }
+  if (m.kind === "devmenu") {
+    const d = S.devices.find((x) => x.id === m.id);
+    if (!d) return closeModal();
+    el.innerHTML = head(esc(d.name)) + `<div class="rows">
+      <button class="r" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("send")}</span><span class="grow">Send files</span></button>
+      <button class="r" data-act="forget" data-id="${d.id}"><span class="ic" style="background:var(--bad-soft);color:var(--bad)">${icon("close")}</span><span class="grow">Forget this phone</span></button></div>`;
+  }
+}
+
+function renderSettings(el) {
+  el.innerHTML = head("Settings") +
+    `<div class="label">Shared folders</div><p class="small" style="margin:0 2px 8px">Phones can save into these folders (and their subfolders), and nothing else on this laptop.</p>
+    <div class="rows">${S.folders.map((f) => `<div class="r"><span class="ic">${icon(folderIcon(f.key))}</span>
+      <span class="grow"><div class="t1">${esc(f.label)}${f.default ? ` <span class="chip">Default</span>` : ""}</div><div class="t2" title="${esc(f.path)}">${esc(f.path)}</div></span>
+      <button class="iconbtn" data-act="openfolder" data-key="${f.key}" title="Open">${icon("folder")}</button>
+      <button class="iconbtn" data-act="unshare" data-key="${f.key}" title="Stop sharing">${icon("close")}</button></div>`).join("")}
+      <button class="r" data-act="share"><span class="ic">${icon("add")}</span><span class="grow" style="color:var(--brand);font-weight:600">Add a folder…</span></button></div>
+
+    <div class="label">This laptop</div>
+    <div class="rows">
+      <button class="r" data-act="autostart"><span class="grow"><div>Start LAN Share when I sign in</div><div class="t2">So your phone can always send to this laptop</div></span><span class="switch ${S.me.autostart ? "on" : ""}"></span></button>
+      <button class="r" data-act="firewall"><span class="ic">${icon("shield")}</span><span class="grow"><div>Allow through Windows Firewall</div><div class="t2">Fixes "phone can't connect to laptop". Windows asks once.</div></span></button>
+      <button class="r" data-act="openlog"><span class="ic">${icon("doc")}</span><span class="grow"><div>Open log file</div><div class="t2">${esc(S.me.logPath)}</div></span></button>
+      <div class="r"><span class="ic">${icon("desktop")}</span><span class="grow"><div>${esc(S.me.name)}</div><div class="t2">${esc(S.me.host)}:${S.me.port} · version ${esc(S.me.version)}</div></span></div>
+    </div>
+    <div class="foot"><button class="btn danger" data-act="quit">Quit LAN Share</button></div>
+    <p class="small center">Closing the window keeps LAN Share running, so phones can still send to you.</p>
+    <div id="serr" class="error"></div>`;
+}
+
+// ------------------------------------------------------------- send sheet
+function openSend(opts) {
+  const online = S.devices.filter((d) => d.status === "online");
+  const device = opts.device || (online.length === 1 ? online[0].id : null);
+  openModal({kind: "send", files: opts.files || [], device, roots: null, folder: null, path: [], dirs: null, loading: false, error: ""});
+  if (device) loadRoots();
+}
+
+async function loadRoots() {
+  const m = modal; m.roots = null; m.folder = null; m.path = []; m.dirs = null; m.error = ""; renderModal();
+  try {
+    const r = await api("/api/remote/folders?device=" + m.device + "&t=" + token, undefined, "GET");
+    if (modal !== m) return;
+    m.roots = r.folders || [];
+    m.defaultKey = r.default;
+  } catch (e) { m.error = e.message; }
+  if (modal === m) renderModal();
+}
+
+async function openFolder(folder, path) {
+  const m = modal; m.folder = folder; m.path = path; m.dirs = null; m.error = ""; renderModal();
+  try {
+    const r = await api(`/api/remote/list?device=${m.device}&folder=${encodeURIComponent(folder.key)}&path=${encodeURIComponent(path.join("/"))}`, undefined, "GET");
+    if (modal !== m) return;
+    m.dirs = r.dirs || [];
+  } catch (e) { m.error = e.message; m.dirs = []; }
+  if (modal === m) renderModal();
+}
+
+function renderSend(el) {
+  const m = modal;
+  const total = m.files.reduce((s, f) => s + f.size, 0);
+  let h = head("Send files");
+  h += `<div class="label">Files</div><div class="rows">` + m.files.map((f, i) => `<div class="r"><span class="ic">${icon("file")}</span>
+    <span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${size(f.size)}</div></span>
+    <button class="iconbtn" data-act="rmfile" data-i="${i}" title="Remove">${icon("close")}</button></div>`).join("") +
+    `<button class="r" data-act="addfiles"><span class="ic">${icon("add")}</span><span class="grow" style="color:var(--brand);font-weight:600">${m.files.length ? "Add more files…" : "Choose files…"}</span><span class="small">or drop them here</span></button></div>`;
+
+  h += `<div class="label">To</div><div class="devpick">` + S.devices.map((d) =>
+    `<button class="${m.device === d.id ? "sel" : ""}" data-act="pickdev" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>
+      <span class="dot ${d.status}"></span>${esc(d.name)}</button>`).join("") + `</div>`;
+
+  if (m.device) {
+    const dev = S.devices.find((d) => d.id === m.device);
+    h += `<div class="label">Save in</div>`;
+    if (m.error) h += `<div class="error">${esc(m.error)}</div>`;
+    if (!m.roots && !m.error) h += `<p class="muted">Asking ${esc(dev ? dev.name : "the phone")} for its folders…</p>`;
+    else if (m.roots && !m.folder) {
+      h += `<div class="rows">` + m.roots.map((f, i) => `<button class="r" data-act="root" data-i="${i}"><span class="ic">${icon(folderIcon(f.key))}</span>
+        <span class="grow">${esc(f.label)}</span>${f.key === m.defaultKey ? `<span class="chip">Default</span>` : ""}<svg class="i chev" viewBox="0 0 24 24"><use href="#i-chev"/></svg></button>`).join("") + `</div>`;
+    } else if (m.folder) {
+      h += `<div class="crumbs"><button data-act="crumb" data-n="-1">${esc(dev ? dev.name : "Phone")}</button><span>›</span>
+        <button data-act="crumb" data-n="0">${esc(m.folder.label)}</button>` +
+        m.path.map((p, i) => `<span>›</span><button data-act="crumb" data-n="${i + 1}">${esc(p)}</button>`).join("") + `</div>`;
+      if (m.dirs === null) h += `<p class="muted">Loading…</p>`;
+      else h += `<div class="rows">` + (m.dirs.length ? m.dirs.map((d, i) => `<button class="r" data-act="sub" data-i="${i}"><span class="ic">${icon("folder")}</span>
+          <span class="grow">${esc(d)}</span><svg class="i chev" viewBox="0 0 24 24"><use href="#i-chev"/></svg></button>`).join("")
+          : `<div class="r"><span class="grow small">No subfolders here.</span></div>`) + `</div>`;
+    }
+  }
+  const where = m.folder ? [m.folder.label, ...m.path].join(" / ") : "";
+  const ready = m.files.length && m.device && m.folder;
+  h += `<div class="foot"><button class="btn big" data-act="dosend" ${ready ? "" : "disabled"}>${icon("send")}
+    ${ready ? `Send ${m.files.length > 1 ? m.files.length + " files" : ""} (${size(total)}) to ${esc(where)}` : !m.files.length ? "Choose files to send" : !m.device ? "Choose a phone" : "Choose a folder"}</button></div>`;
+  el.innerHTML = h;
+}
+
+// ------------------------------------------------------------- actions
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("[data-act]");
+  if (!t || t.disabled) return;
+  const act = t.dataset.act, m = modal;
+  try {
+    switch (act) {
+      case "close": return closeModal();
+      case "pair": await api("/api/pair", {}); return openModal({kind: "pair"});
+      case "send": return openSend({device: t.dataset.id});
+      case "devmenu": return openModal({kind: "devmenu", id: t.dataset.id});
+      case "forget": {
+        const d = S.devices.find((x) => x.id === t.dataset.id);
+        return openModal({kind: "confirm", title: `Forget ${d.name}?`, ok: "Forget",
+          text: "It won't be able to connect to this laptop any more. To use it again, pair it again.",
+          run: () => api("/api/forget", {id: d.id})});
+      }
+      case "confirmok": { const run = m.run; closeModal(); await run(); return; }
+      case "showfile": return api("/api/open", {what: "file", path: t.dataset.path});
+      case "firewall": toast("Windows will ask for permission…"); await api("/api/firewall", {}); return toast("Done. Phones can connect to this laptop now.");
+      case "openlog": return api("/api/open", {what: "log"});
+      case "openfolder": return api("/api/open", {what: "folder", key: t.dataset.key});
+      case "share": { const r = await api("/api/pick/folder", {}); await api("/api/folders/add", {path: r.path}); return; }
+      case "unshare": return api("/api/folders/remove", {key: t.dataset.key});
+      case "autostart": return api("/api/autostart", {on: !S.me.autostart});
+      case "quit": await api("/api/quit", {}); document.body.innerHTML = `<div class="wrap"><p class="muted">LAN Share has stopped. You can close this window.</p></div>`; return;
+      case "rmfile": m.files.splice(+t.dataset.i, 1); return renderModal();
+      case "addfiles": { const r = await api("/api/pick/files", {}); m.files.push(...r); return renderModal(); }
+      case "pickdev": m.device = t.dataset.id; return loadRoots();
+      case "root": return openFolder(m.roots[+t.dataset.i], []);
+      case "sub": return openFolder(m.folder, [...m.path, m.dirs[+t.dataset.i]]);
+      case "crumb": { const n = +t.dataset.n; if (n < 0) { m.folder = null; m.path = []; return renderModal(); } return openFolder(m.folder, m.path.slice(0, n)); }
+      case "dosend": {
+        await api("/api/send", {device: m.device, folder: m.folder.key, folderLabel: m.folder.label, path: m.path.join("/"), files: m.files});
+        return closeModal();
+      }
+    }
+  } catch (e) {
+    if (e.message === "cancelled") return;
+    if (m && m.kind === "send") { m.error = e.message; renderModal(); }
+    else if (m && m.kind === "settings") { const s = $("serr"); if (s) s.textContent = e.message; }
+    else toast(e.message);
+  }
+});
+$("settingsBtn").onclick = () => openModal({kind: "settings"});
+$("sendBtn").onclick = () => openSend({});
+$("modal").addEventListener("mousedown", (e) => { if (e.target.id === "modal") closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && modal) closeModal(); });
+
+// Drag and drop files onto the window: copy them to LAN Share, then open the send sheet.
+let dragDepth = 0;
+addEventListener("dragenter", (e) => { if (e.dataTransfer.types.includes("Files")) { dragDepth++; $("drop").classList.remove("gone"); } });
+addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("drop").classList.add("gone"); } });
+addEventListener("dragover", (e) => e.preventDefault());
+addEventListener("drop", async (e) => {
+  e.preventDefault(); dragDepth = 0; $("drop").classList.add("gone");
+  const list = [...e.dataTransfer.files].filter((f) => f.size > 0 || f.type);
+  if (!list.length) return;
+  toast(`Preparing ${list.length} file${list.length > 1 ? "s" : ""}…`);
+  const got = [];
+  for (const f of list) {
+    const r = await fetch("/api/upload?name=" + encodeURIComponent(f.name), {method: "POST", headers: {"X-Token": token}, body: f});
+    if (r.ok) got.push(await r.json());
+  }
+  if (modal && modal.kind === "send") { modal.files.push(...got); renderModal(); } else openSend({files: got});
+});
+
+setInterval(() => { if (modal && modal.kind === "pair") renderModal(); }, 1000);
+setInterval(render, 30000); // keep "5 min ago" fresh
+connect();
+</script>
+</body>
+</html>

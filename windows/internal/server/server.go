@@ -39,6 +39,7 @@ const (
 	EventPaired EventKind = iota
 	EventReceived
 	EventFailed
+	EventProgress // while receiving: Bytes so far of Total, file Name
 )
 
 // Event is reported to the UI through Server.OnEvent.
@@ -48,9 +49,14 @@ type Event struct {
 	Device   string        // peer's friendly name
 	PeerIP   string        // EventPaired: the address the peer connected from
 	Path     string        // EventReceived: where the file was saved
+	Folder   string        // EventReceived: shared folder key
 	Bytes    int64         // EventReceived: file size
 	Duration time.Duration // EventReceived: time spent receiving
 	Err      error         // EventFailed
+	Transfer string        // transfer id (EventProgress, EventReceived)
+	Name     string        // EventProgress: file being received
+	Total    int64         // EventProgress: bytes in the whole transfer
+	Done     bool          // EventReceived: last file of the transfer
 }
 
 // Server holds everything needed to answer peers.
@@ -60,11 +66,15 @@ type Server struct {
 	Trust    *trust.Store
 	Folders  *files.Folders
 	OnEvent  func(Event)
+	// ReportReach, if set, is sent in every pong: whether we can connect back to
+	// the pinging device. The phone simulator uses it to imitate a blocked firewall.
+	ReportReach *bool
 
 	mu         sync.Mutex
 	pairCode   string
 	pairExpiry time.Time
 	pairFails  int
+	contacts   map[string]time.Time
 }
 
 // StartPairing opens a 2-minute pairing window and returns its one-time code.
@@ -126,6 +136,9 @@ func (s *Server) handle(c *tls.Conn) {
 	}
 	peerID, _ := fingerprintRaw(rawCerts(c))
 	peer, trusted := s.Trust.Get(peerID)
+	if trusted {
+		s.noteContact(peerID)
+	}
 
 	conn := &idleConn{c}
 	typ, raw, err := protocol.ReadFrame(conn)
@@ -161,23 +174,31 @@ func (s *Server) handle(c *tls.Conn) {
 				trusted, peer = true, trust.Device{ID: peerID, Name: req.Name}
 			}
 		case "ping":
-			err = protocol.WriteFrame(conn, protocol.Message{Type: "pong"})
+			if s.ReportReach != nil {
+				err = protocol.WriteFrame(conn, map[string]any{"type": "pong", "reach": *s.ReportReach})
+			} else {
+				err = protocol.WriteFrame(conn, protocol.Message{Type: "pong"})
+			}
 		case "folders_request":
 			err = s.sendFolders(conn)
+		case "list_request":
+			var req protocol.ListRequest
+			json.Unmarshal(raw, &req)
+			err = s.sendList(conn, req)
 		case "file_offer":
 			var offer protocol.FileOffer
 			if json.Unmarshal(raw, &offer) != nil {
 				return
 			}
-			err = s.receive(conn, peer.Name, offer)
+			if err = s.receive(conn, peerID, peer.Name, offer); err != nil {
+				s.emit(Event{Kind: EventFailed, DeviceID: peerID, Device: peer.Name, Err: err})
+				return
+			}
 		default:
 			err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "unknown_type"})
 		}
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				s.emit(Event{Kind: EventFailed, Device: peer.Name, Err: err})
-			}
-			return
+			return // the peer hung up between messages: normal, nothing to report
 		}
 	}
 }
@@ -219,6 +240,43 @@ func (s *Server) pair(w io.Writer, peerID, peerIP string, req protocol.PairReque
 	return true
 }
 
+// noteContact records that a paired device just reached us. If a phone shows online
+// to us but never reaches us, something (usually Windows Firewall) blocks it.
+func (s *Server) noteContact(id string) {
+	s.mu.Lock()
+	if s.contacts == nil {
+		s.contacts = map[string]time.Time{}
+	}
+	s.contacts[id] = time.Now()
+	s.mu.Unlock()
+}
+
+// LastContact says when a paired device last connected to us (zero if never this run).
+func (s *Server) LastContact(id string) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.contacts[id]
+}
+
+func (s *Server) sendList(w io.Writer, req protocol.ListRequest) error {
+	dirs, entries, err := s.Folders.ListDir(req.Folder, req.Path)
+	if err != nil {
+		return protocol.WriteFrame(w, protocol.Error{Type: "error", Code: "bad_folder", Message: "not a shared folder"})
+	}
+	resp := protocol.ListResponse{Type: "list_response", Folder: req.Folder, Path: req.Path, Dirs: dirs, Files: []protocol.ListFile{}}
+	if resp.Dirs == nil {
+		resp.Dirs = []string{}
+	}
+	for _, e := range entries {
+		resp.Files = append(resp.Files, protocol.ListFile{Name: e.Name, Size: e.Size, Modified: e.Modified.UnixMilli()})
+	}
+	// Keep the reply under the frame limit on huge folders.
+	for len(resp.Files) > 2000 {
+		resp.Files = resp.Files[:2000]
+	}
+	return protocol.WriteFrame(w, resp)
+}
+
 func (s *Server) sendFolders(w io.Writer) error {
 	keys, labels := s.Folders.List()
 	resp := protocol.FoldersResponse{Type: "folders_response", Default: s.Folders.Default}
@@ -229,12 +287,12 @@ func (s *Server) sendFolders(w io.Writer) error {
 }
 
 // receive implements the transfer rules of PROTOCOL.md §5.
-func (s *Server) receive(conn io.ReadWriter, from string, offer protocol.FileOffer) error {
+func (s *Server) receive(conn io.ReadWriter, peerID, from string, offer protocol.FileOffer) error {
 	reject := func(reason string) error {
 		return protocol.WriteFrame(conn, protocol.FileReject{Type: "file_reject", TransferID: offer.TransferID, Reason: reason})
 	}
-	dir, ok := s.Folders.Path(offer.Folder)
-	if !ok {
+	dir, err := s.Folders.Resolve(offer.Folder, offer.Path)
+	if err != nil {
 		return reject("bad_folder")
 	}
 	names := make([]string, len(offer.Files))
@@ -260,6 +318,10 @@ func (s *Server) receive(conn io.ReadWriter, from string, offer protocol.FileOff
 	}()
 
 	saved := make([]string, 0, len(offer.Files))
+	var total, doneBefore int64
+	for _, f := range offer.Files {
+		total += f.Size
+	}
 	for i, f := range offer.Files {
 		start := time.Now()
 		part := files.UniquePath(dir, names[i]+".part")
@@ -270,7 +332,9 @@ func (s *Server) receive(conn io.ReadWriter, from string, offer protocol.FileOff
 		}
 		parts = append(parts, part)
 		h := sha256.New()
-		_, err = io.CopyN(io.MultiWriter(out, h), conn, f.Size)
+		pw := &progressWriter{s: s, ev: Event{Kind: EventProgress, DeviceID: peerID, Device: from, Transfer: offer.TransferID, Name: names[i], Total: total}, done: doneBefore}
+		_, err = io.CopyN(io.MultiWriter(out, h, pw), conn, f.Size)
+		doneBefore += f.Size
 		if cerr := out.Close(); err == nil {
 			err = cerr
 		}
@@ -297,7 +361,8 @@ func (s *Server) receive(conn io.ReadWriter, from string, offer protocol.FileOff
 		}
 		parts = parts[:len(parts)-1]
 		saved = append(saved, filepath.Base(final))
-		s.emit(Event{Kind: EventReceived, Device: from, Path: final, Bytes: f.Size, Duration: time.Since(start)})
+		s.emit(Event{Kind: EventReceived, DeviceID: peerID, Device: from, Path: final, Bytes: f.Size, Duration: time.Since(start),
+			Folder: offer.Folder, Transfer: offer.TransferID, Done: i == len(offer.Files)-1})
 	}
 	return protocol.WriteFrame(conn, protocol.TransferDone{Type: "transfer_done", TransferID: offer.TransferID, Saved: saved})
 }
@@ -306,6 +371,25 @@ func (s *Server) emit(e Event) {
 	if s.OnEvent != nil {
 		s.OnEvent(e)
 	}
+}
+
+// progressWriter reports receive progress at most ~6 times a second.
+type progressWriter struct {
+	s    *Server
+	ev   Event
+	done int64
+	last time.Time
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	p.done += int64(len(b))
+	if time.Since(p.last) > 150*time.Millisecond {
+		p.last = time.Now()
+		ev := p.ev
+		ev.Bytes = p.done
+		p.s.emit(ev)
+	}
+	return len(b), nil
 }
 
 func hostOf(a net.Addr) string {

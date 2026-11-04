@@ -102,10 +102,21 @@ func (c *Conn) send(msg any) error {
 
 // Ping checks the device is alive and answering.
 func (c *Conn) Ping() error {
+	_, err := c.PingInfo()
+	return err
+}
+
+// PingInfo pings and also returns whether the device says it can connect back to us
+// (nil if it didn't say). false usually means a firewall on this computer blocks it.
+func (c *Conn) PingInfo() (*bool, error) {
 	if err := c.send(protocol.Message{Type: "ping"}); err != nil {
-		return err
+		return nil, err
 	}
-	return c.expect(nil, "pong")
+	var pong struct {
+		Reach *bool `json:"reach"`
+	}
+	err := c.expect(&pong, "pong")
+	return pong.Reach, err
 }
 
 // Pair sends the one-time code from the QR (only the fake phone uses this; the real
@@ -137,13 +148,23 @@ func (c *Conn) Folders() (protocol.FoldersResponse, error) {
 	return resp, err
 }
 
+// List asks what is inside a shared folder (path "" = its top level).
+func (c *Conn) List(folder, path string) (protocol.ListResponse, error) {
+	var resp protocol.ListResponse
+	if err := c.send(protocol.ListRequest{Type: "list_request", Folder: folder, Path: path}); err != nil {
+		return resp, err
+	}
+	err := c.expect(&resp, "list_response")
+	return resp, err
+}
+
 // Progress is called while sending: bytes sent so far across all files, total bytes,
 // and the index of the file being sent.
 type Progress func(sent, total int64, file int)
 
-// SendFiles streams local files into folderKey on the device and returns the saved names.
-func (c *Conn) SendFiles(transferID, folderKey string, paths []string, progress Progress) ([]string, error) {
-	offer := protocol.FileOffer{Type: "file_offer", TransferID: transferID, Folder: folderKey}
+// SendFiles streams local files into folderKey (and subfolder subPath) on the device and returns the saved names.
+func (c *Conn) SendFiles(transferID, folderKey, subPath string, paths []string, progress Progress) ([]string, error) {
+	offer := protocol.FileOffer{Type: "file_offer", TransferID: transferID, Folder: folderKey, Path: subPath}
 	var total int64
 	for _, p := range paths {
 		st, err := os.Stat(p)

@@ -47,6 +47,9 @@ type State struct {
 	Status   Status
 	Addr     string    // where it answered last, "ip:port"
 	LastSeen time.Time // zero if never seen this run
+	// CantReachUs is true when the device answers us but reports it can't connect
+	// back to this computer: almost always Windows Firewall blocking LAN Share.
+	CantReachUs bool
 }
 
 // Tracker pings paired devices in the background.
@@ -203,10 +206,11 @@ func (t *Tracker) tryDevice(id string) (string, bool) {
 		if err != nil {
 			continue
 		}
-		err = c.Ping()
+		reach, err := c.PingInfo()
 		c.Close()
 		if err == nil {
 			t.update(id, Online, addr)
+			t.setReach(id, reach != nil && !*reach)
 			t.Trust.SetAddr(id, addr)
 			return addr, true
 		}
@@ -238,12 +242,30 @@ func (t *Tracker) update(id string, st Status, addr string) {
 		// One missed ping can be Wi-Fi noise (or a phone that is just starting up).
 		if t.misses[id] >= missesOffline {
 			s.Status = Offline
+			s.CantReachUs = false // we can't reach it either; the warning no longer applies
 		}
 	}
 	s.Name = d.Name
 	snap := *s
 	t.mu.Unlock()
 	if snap.Status != prev && t.OnChange != nil {
+		t.OnChange(snap)
+	}
+}
+
+func (t *Tracker) setReach(id string, cant bool) {
+	t.mu.Lock()
+	s, ok := t.states[id]
+	changed := ok && s.CantReachUs != cant
+	if ok {
+		s.CantReachUs = cant
+	}
+	var snap State
+	if ok {
+		snap = *s
+	}
+	t.mu.Unlock()
+	if changed && t.OnChange != nil {
 		t.OnChange(snap)
 	}
 }

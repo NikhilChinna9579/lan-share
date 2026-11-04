@@ -49,7 +49,7 @@ func TestLaptopSendsToPhone(t *testing.T) {
 		t.Fatalf("folders %+v %v", f, err)
 	}
 	var last int64
-	saved, err := c.SendFiles("t1", "downloads", []string{src, empty}, func(sent, total int64, _ int) { last = sent })
+	saved, err := c.SendFiles("t1", "downloads", "", []string{src, empty}, func(sent, total int64, _ int) { last = sent })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +59,27 @@ func TestLaptopSendsToPhone(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(inbox, "a b.bin"))
 	if !bytes.Equal(got, data) {
 		t.Fatal("content differs")
+	}
+
+	// Browse into a subfolder and save there.
+	os.MkdirAll(filepath.Join(inbox, "Work", "2026"), 0o755)
+	os.MkdirAll(filepath.Join(inbox, ".hidden"), 0o755)
+	l, err := c.List("downloads", "")
+	if err != nil || len(l.Dirs) != 1 || l.Dirs[0] != "Work" || len(l.Files) != 2 {
+		t.Fatalf("list %+v %v", l, err)
+	}
+	if _, err := c.SendFiles("t2", "downloads", "Work/2026", []string{empty}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(inbox, "Work", "2026", "empty.txt")); err != nil {
+		t.Fatal("not saved in subfolder")
+	}
+	// Escaping the shared folder is refused.
+	if _, err := c.List("downloads", "../.."); err == nil {
+		t.Fatal("listed outside the shared folder")
+	}
+	if _, err := c.SendFiles("t3", "downloads", "../x", []string{empty}, nil); err == nil {
+		t.Fatal("saved outside the shared folder")
 	}
 }
 
