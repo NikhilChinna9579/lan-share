@@ -151,7 +151,14 @@ class Bubble(private val ctx: Context) {
         @Volatile var hiddenForAssistant = false
 
 
-        fun enabled(ctx: Context) = ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE).getBoolean("on", false)
+        /**
+         * On if switched on in LAN Share, or, until the person chooses either way there,
+         * if they allowed "Display over other apps" (that alone says they want it).
+         */
+        fun enabled(ctx: Context): Boolean {
+            val p = ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE)
+            return if (p.contains("on")) p.getBoolean("on", false) else Settings.canDrawOverlays(ctx)
+        }
 
         fun setEnabled(ctx: Context, on: Boolean) {
             ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE).edit().putBoolean("on", on).apply()
