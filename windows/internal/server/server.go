@@ -44,7 +44,9 @@ const (
 // Event is reported to the UI through Server.OnEvent.
 type Event struct {
 	Kind     EventKind
+	DeviceID string        // peer's key fingerprint
 	Device   string        // peer's friendly name
+	PeerIP   string        // EventPaired: the address the peer connected from
 	Path     string        // EventReceived: where the file was saved
 	Bytes    int64         // EventReceived: file size
 	Duration time.Duration // EventReceived: time spent receiving
@@ -155,7 +157,7 @@ func (s *Server) handle(c *tls.Conn) {
 		case "pair_request":
 			var req protocol.PairRequest
 			json.Unmarshal(raw, &req)
-			if s.pair(conn, peerID, req) {
+			if s.pair(conn, peerID, hostOf(c.RemoteAddr()), req) {
 				trusted, peer = true, trust.Device{ID: peerID, Name: req.Name}
 			}
 		case "ping":
@@ -181,7 +183,7 @@ func (s *Server) handle(c *tls.Conn) {
 }
 
 // pair checks the one-time code and, if it matches, trusts the peer.
-func (s *Server) pair(w io.Writer, peerID string, req protocol.PairRequest) bool {
+func (s *Server) pair(w io.Writer, peerID, peerIP string, req protocol.PairRequest) bool {
 	s.mu.Lock()
 	reason := ""
 	switch {
@@ -213,7 +215,7 @@ func (s *Server) pair(w io.Writer, peerID string, req protocol.PairRequest) bool
 		return false
 	}
 	protocol.WriteFrame(w, protocol.PairOK{Type: "pair_ok", Name: s.Name})
-	s.emit(Event{Kind: EventPaired, Device: name})
+	s.emit(Event{Kind: EventPaired, DeviceID: peerID, Device: name, PeerIP: peerIP})
 	return true
 }
 
@@ -304,6 +306,13 @@ func (s *Server) emit(e Event) {
 	if s.OnEvent != nil {
 		s.OnEvent(e)
 	}
+}
+
+func hostOf(a net.Addr) string {
+	if h, _, err := net.SplitHostPort(a.String()); err == nil {
+		return h
+	}
+	return ""
 }
 
 func rawCerts(c *tls.Conn) [][]byte {

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,6 +17,7 @@ type Device struct {
 	ID       string    `json:"id"` // key fingerprint
 	Name     string    `json:"name"`
 	PairedAt time.Time `json:"paired_at"`
+	Addr     string    `json:"addr,omitempty"` // last address it was reached at, "ip:port"
 }
 
 // Store is safe for concurrent use.
@@ -60,7 +63,28 @@ func (s *Store) Add(d Device) error {
 	return s.save()
 }
 
-// List returns all paired devices.
+// SetAddr remembers where a device was last reached. No-op for unknown devices.
+func (s *Store) SetAddr(id, addr string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.devices[id]
+	if !ok || d.Addr == addr {
+		return nil
+	}
+	d.Addr = addr
+	s.devices[id] = d
+	return s.save()
+}
+
+// Remove forgets a device: it can no longer connect (PROTOCOL.md, revocation).
+func (s *Store) Remove(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.devices, id)
+	return s.save()
+}
+
+// List returns all paired devices, sorted by name.
 func (s *Store) List() []Device {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,6 +92,7 @@ func (s *Store) List() []Device {
 	for _, d := range s.devices {
 		out = append(out, d)
 	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out
 }
 

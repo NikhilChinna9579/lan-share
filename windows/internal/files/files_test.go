@@ -8,14 +8,14 @@ import (
 
 func TestSanitizeName(t *testing.T) {
 	cases := map[string]string{
-		"report.pdf":           "report.pdf",
-		"../../etc/passwd":     "passwd",
-		`..\..\Windows\x.dll`:  "x.dll",
-		"a<b>c:d.txt":          "abcd.txt",
-		"CON.txt":              "_CON.txt",
-		"trailing dots...":     "trailing dots",
-		"photo\x00\x1f.jpg":    "photo.jpg",
-		"नमस्ते.txt":           "नमस्ते.txt",
+		"report.pdf":          "report.pdf",
+		"../../etc/passwd":    "passwd",
+		`..\..\Windows\x.dll`: "x.dll",
+		"a<b>c:d.txt":         "abcd.txt",
+		"CON.txt":             "_CON.txt",
+		"trailing dots...":    "trailing dots",
+		"photo\x00\x1f.jpg":   "photo.jpg",
+		"नमस्ते.txt":          "नमस्ते.txt",
 	}
 	for in, want := range cases {
 		got, err := SanitizeName(in)
