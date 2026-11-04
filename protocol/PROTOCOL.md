@@ -134,6 +134,17 @@ and sends the rest. The checksum still covers the whole file. A transfer cancell
 the receiving side keeps nothing; a checksum mismatch deletes the kept part.
 Unfinished files are deleted after 3 days. Senders must honour `offsets`.
 
+### Search
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `search_request` | either | `query`: words that must all appear in the file name (any case) |
+| `search_response` | reply | `results`: list of `{folder, path, name, size, modified}`, newest first, at most 200 |
+
+Searches every shared folder and its subfolders (hidden items skipped), for at most
+about 2 seconds. Refused with `not_allowed` when browsing is off. A hit can be fetched
+with `fetch_request` using its `folder` and `path`.
+
 ### New folder
 
 | Type | Direction | Fields |

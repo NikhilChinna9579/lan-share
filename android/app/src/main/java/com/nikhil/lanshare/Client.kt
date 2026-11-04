@@ -109,6 +109,23 @@ object Client {
             saved
         }
 
+    class Hit(val folder: String, val path: String, val name: String, val size: Long, val modified: Long)
+
+    /** Finds files by name in all of the laptop's shared folders (and subfolders). */
+    fun search(device: Device, myName: String, query: String): List<Hit> =
+        PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            conn.send(JSONObject().put("type", "search_request").put("query", query))
+            val r = conn.receive()
+            if (r.optString("type") != "search_response") {
+                throw IllegalStateException(if (r.optString("code") == "not_allowed") "${device.name} doesn't allow browsing its files." else "Search didn't work.")
+            }
+            val arr = r.optJSONArray("results") ?: JSONArray()
+            (0 until arr.length()).map {
+                val o = arr.getJSONObject(it)
+                Hit(o.optString("folder"), o.optString("path"), o.optString("name"), o.optLong("size"), o.optLong("modified"))
+            }
+        }
+
     /** Makes a subfolder on the laptop (the "New folder" button); returns its name. */
     fun mkdir(device: Device, myName: String, folderKey: String, path: String, name: String): String =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->

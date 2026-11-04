@@ -74,6 +74,18 @@ func TestFetchFromDevice(t *testing.T) {
 	if sent.Load() != 2 {
 		t.Fatalf("server reported %d sent events", sent.Load())
 	}
+	// Search finds files in subfolders, but never hidden ones.
+	c = dial()
+	hits, err := c.Search("PHOTO")
+	c.Close()
+	if err != nil || len(hits) != 1 || hits[0].Path != "Sub" || hits[0].Name != "photo.jpg" || hits[0].Folder != "docs" {
+		t.Fatalf("search: %+v %v", hits, err)
+	}
+	c = dial()
+	if hits, _ := c.Search("secret"); len(hits) != 0 {
+		t.Fatalf("search found a hidden file: %+v", hits)
+	}
+	c.Close()
 	// Refused: hidden files, paths, files outside the folder, missing files.
 	for _, bad := range []struct{ path, name string }{
 		{"", ".secret"}, {"", "../outside.txt"}, {"..", "outside.txt"}, {"", "missing.txt"}, {"", "Sub"},

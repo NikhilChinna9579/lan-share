@@ -317,6 +317,15 @@ func serveAPI(a *app, ln net.Listener) {
 		a.hub.changed()
 		return nil, err
 	})
+	h("/api/remote/search", func(r *http.Request) (any, error) {
+		q := r.URL.Query()
+		c, _, err := a.dial(q.Get("device"))
+		if err != nil {
+			return nil, err
+		}
+		defer c.Close()
+		return c.Search(q.Get("q"))
+	})
 	h("/api/remote/mkdir", func(r *http.Request) (any, error) {
 		var in struct{ Device, Folder, Path, Name string }
 		if err := readJSON(r, &in); err != nil {

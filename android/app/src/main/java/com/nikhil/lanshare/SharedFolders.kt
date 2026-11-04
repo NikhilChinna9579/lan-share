@@ -128,6 +128,42 @@ object SharedFolders {
         return Listing(dirs.toList(), files.sortedByDescending { it.third }.take(2000))
     }
 
+    class Hit(val folder: String, val path: String, val name: String, val size: Long, val modified: Long)
+
+    /**
+     * Files whose names contain every word of [query], in all shared folders and their
+     * subfolders, newest first. Stops after [limit] hits or 2 seconds.
+     */
+    fun search(ctx: Context, query: String, limit: Int = 200): List<Hit> {
+        val words = query.lowercase().split(' ').filter { it.isNotBlank() }
+        if (words.isEmpty()) return emptyList()
+        val deadline = System.currentTimeMillis() + 2_000
+        val hits = mutableListOf<Hit>()
+        fun matches(name: String) = name.lowercase().let { n -> words.all { it in n } } && !name.startsWith(".")
+        for (root in roots(ctx)) {
+            if (hits.size >= limit || System.currentTimeMillis() > deadline) break
+            if (root.tree == null) {
+                val dir = root.dir!!
+                media(ctx, dir, exact = false) { _, name, rel, size, modified ->
+                    if (hits.size < limit && matches(name) && rel.length >= dir.length && !rel.substring(dir.length).split('/').any { it.startsWith(".") }) {
+                        hits += Hit(root.key, rel.substring(dir.length).trim('/'), name, size, modified)
+                    }
+                }
+            } else {
+                fun walk(id: String, path: String, depth: Int) {
+                    children(ctx, root.tree, id) { childId, name, mime, size, modified ->
+                        if (hits.size >= limit || System.currentTimeMillis() > deadline || name.startsWith(".")) return@children
+                        if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            if (depth < 6) walk(childId, if (path.isEmpty()) name else "$path/$name", depth + 1)
+                        } else if (matches(name)) hits += Hit(root.key, path, name, size, modified)
+                    }
+                }
+                walk(DocumentsContract.getTreeDocumentId(root.tree), "", 0)
+            }
+        }
+        return hits.sortedByDescending { it.modified }
+    }
+
     /** A file in a shared folder, ready to send; null if it isn't there. */
     fun open(ctx: Context, key: String, path: String, name: String): Client.Outgoing? {
         val root = roots(ctx).firstOrNull { it.key == key } ?: return null

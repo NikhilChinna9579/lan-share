@@ -372,36 +372,42 @@ class AssistantActivity : Activity() {
         say("Looking for “${c.name}” on ${d.name}…")
         show(emptyList(), asking = false)
         worker.execute {
-            // Searches the top of each shared folder on the laptop.
-            val found = mutableListOf<Triple<Client.Folder, Client.RemoteFile, Int>>()
+            // Asks the laptop to search all its shared folders (and subfolders) for the most
+            // telling word, then ranks what comes back against everything that was said.
+            val found = mutableListOf<Found>()
             val r = runCatching {
                 val dev = DeviceStore.get(this, d.id) ?: d
-                for (root in Client.folders(dev, myName).second) {
-                    runCatching { Client.listing(dev, myName, root.key, "").second }.getOrDefault(emptyList()).forEach { f ->
-                        val s = Commands.nameScore(f.name, c.name)
-                        if (s > 0) found += Triple(root, f, s)
-                    }
+                val labels = Client.folders(dev, myName).second.associateBy { it.key }
+                val word = Commands.normalize(c.name).split(' ').maxByOrNull { it.length } ?: c.name
+                Client.search(dev, myName, word).forEach { h ->
+                    val score = Commands.nameScore(h.name, c.name)
+                    if (score > 0) found += Found(labels[h.folder] ?: Client.Folder(h.folder, h.folder), h.path,
+                        Client.RemoteFile(h.name, h.size, h.modified), score)
                 }
             }
-            val best = found.sortedWith(compareByDescending<Triple<Client.Folder, Client.RemoteFile, Int>> { it.third }.thenByDescending { it.second.modified })
+            val best = found.sortedWith(compareByDescending<Found> { it.score }.thenByDescending { it.file.modified })
             Log.i(TAG, "assistant: search \"${c.name}\" on ${d.name}: ${best.size} matches")
             ui {
                 when {
                     r.isFailure -> { say("Couldn't reach ${d.name}", explain(r.exceptionOrNull()!!, d)); show(emptyList(), false) }
-                    best.isEmpty() -> { say("I couldn't find “${c.name}” on ${d.name}", "I look at the top of each folder it shares. Tap ↓ next to it on the home screen to browse."); show(emptyList(), false) }
-                    best.size == 1 || best[0].third > best[1].third -> confirmGet(d, best[0].first, best[0].second)
-                    else -> ask("Which one?", "Found ${best.size} on ${d.name}", best.take(5).map { (root, f, _) ->
-                        Option(f.name, fileIcon(f.name), sub = "${root.label} · ${formatSize(f.size)}") { confirmGet(d, root, f) }
+                    best.isEmpty() -> { say("I couldn't find “${c.name}” on ${d.name}", "I searched all the folders it shares."); show(emptyList(), false) }
+                    best.size == 1 || best[0].score > best[1].score -> confirmGet(d, best[0])
+                    else -> ask("Which one?", "Found ${best.size} on ${d.name}", best.take(5).map { f ->
+                        Option(f.file.name, fileIcon(f.file.name), sub = "${f.where} · ${formatSize(f.file.size)}") { confirmGet(d, f) }
                     })
                 }
             }
         }
     }
 
-    private fun confirmGet(d: Device, root: Client.Folder, f: Client.RemoteFile) {
-        Log.i(TAG, "assistant: plan get ${f.name} from ${d.name} in ${root.label}")
-        countdown("Getting ${f.name} from ${d.name}", "From ${root.label} · ${formatSize(f.size)} · into Downloads", "Get now") {
-            Actions.fetch(this, d, root, "", listOf(f.name), f.size) { explain(it, d) }
+    private class Found(val folder: Client.Folder, val path: String, val file: Client.RemoteFile, val score: Int) {
+        val where get() = (listOf(folder.label) + path.split('/').filter { it.isNotEmpty() }).joinToString(" / ")
+    }
+
+    private fun confirmGet(d: Device, f: Found) {
+        Log.i(TAG, "assistant: plan get ${f.file.name} from ${d.name} in ${f.where}")
+        countdown("Getting ${f.file.name} from ${d.name}", "From ${f.where} · ${formatSize(f.file.size)} · into Downloads", "Get now") {
+            Actions.fetch(this, d, f.folder, f.path, listOf(f.file.name), f.file.size) { explain(it, d) }
         }
     }
 

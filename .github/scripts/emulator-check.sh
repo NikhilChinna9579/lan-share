@@ -126,6 +126,8 @@ shade_closed; sleep 1; A shell input keyevent KEYCODE_BACK; sleep 1; shade_close
 # ---------------------------------------------------------------- 4. laptop gets a file from the phone
 LIST=$(get "/api/remote/list?device=$DEV&folder=downloads&path=")
 echo "$LIST" | grep -q 'Quarterly report.pdf' && pass "laptop lists the phone's Downloads" || fail "laptop lists the phone's Downloads ($LIST)"
+get "/api/remote/search?device=$DEV&q=quarterly" | grep -q 'Quarterly report.pdf' && pass "laptop searches the phone's folders" \
+  || fail "laptop searches the phone's folders"
 rm -f "$HOME/Downloads/Quarterly report.pdf"
 mark
 api /api/fetch "{\"device\":\"$DEV\",\"folder\":\"downloads\",\"folderLabel\":\"Downloads\",\"path\":\"\",\"names\":[\"Quarterly report.pdf\"]}" >/dev/null

@@ -240,6 +240,18 @@ func (s *Server) handle(c *tls.Conn) {
 				break
 			}
 			err = s.sendList(conn, req)
+		case "search_request":
+			var req protocol.SearchRequest
+			json.Unmarshal(raw, &req)
+			if !s.browsable() {
+				err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "not_allowed", Message: "browsing is turned off on " + s.Name})
+				break
+			}
+			resp := protocol.SearchResponse{Type: "search_response", Results: []protocol.SearchHit{}}
+			for _, h := range s.Folders.Search(req.Query, 200) {
+				resp.Results = append(resp.Results, protocol.SearchHit{Folder: h.Folder, Path: h.Path, Name: h.Name, Size: h.Size, Modified: h.Modified.UnixMilli()})
+			}
+			err = protocol.WriteFrame(conn, resp)
 		case "mkdir_request":
 			var req protocol.MkdirRequest
 			json.Unmarshal(raw, &req)

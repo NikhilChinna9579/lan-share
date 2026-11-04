@@ -316,3 +316,13 @@ func (c *Conn) Mkdir(folder, path, name string) (string, error) {
 	err := c.expect(&ok, "mkdir_ok")
 	return ok.Name, err
 }
+
+// Search finds files by name in all of the device's shared folders.
+func (c *Conn) Search(query string) ([]protocol.SearchHit, error) {
+	if err := c.send(protocol.SearchRequest{Type: "search_request", Query: query}); err != nil {
+		return nil, err
+	}
+	var resp protocol.SearchResponse
+	err := c.expect(&resp, "search_response")
+	return resp.Results, err
+}

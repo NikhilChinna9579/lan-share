@@ -373,7 +373,7 @@ function head(title) { return `<div class="head"><h3>${title}</h3><button class=
 // Redraws keep whatever is being typed (live updates arrive every few seconds).
 function renderModal() {
   const keep = {};
-  for (const id of ["newdir", "newname"]) {
+  for (const id of ["newdir", "newname", "search"]) {
     const i = $(id);
     if (i) keep[id] = {v: i.value, f: document.activeElement === i, s: i.selectionStart, e: i.selectionEnd};
   }
@@ -512,6 +512,16 @@ function renderSend(el) {
   if (m.device) {
     const dev = S.devices.find((d) => d.id === m.device);
     h += `<div class="label">${m.get ? "Choose files" : "Save in"}</div>`;
+    if (m.get) {
+      h += `<div class="newdir" style="padding:0 0 8px"><input id="search" placeholder="Search all of ${esc(dev ? dev.name : "the phone")}'s folders" maxlength="100"></div>`;
+      if (m.searching) h += `<p class="muted">Searching…</p>`;
+      else if (m.hits) {
+        h += m.hits.length ? `<div class="rows" style="margin-bottom:10px">` + m.hits.slice(0, 50).map((f, i) => `<div class="r"><span class="ic">${icon("file")}</span>
+            <span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${esc([labelOf(f.folder), ...(f.path ? f.path.split("/") : [])].join(" / "))} · ${size(f.size)} · ${ago(new Date(f.modified).toISOString())}</div></span>
+            <button class="btn small" data-act="gethit" data-i="${i}">${icon("down")}Get</button></div>`).join("") + `</div>`
+          : `<p class="small">Nothing called “${esc(m.q)}” in the shared folders.</p>`;
+      }
+    }
     if (m.error) h += `<div class="error">${esc(m.error)}</div>`;
     if (!m.roots && !m.error) h += `<p class="muted">Asking ${esc(dev ? dev.name : "the phone")} for its folders…</p>`;
     else if (m.roots && !m.folder) {
@@ -551,6 +561,20 @@ function renderSend(el) {
   el.innerHTML = h;
 }
 
+function labelOf(key) { const m = modal; const r = m && m.roots && m.roots.find((x) => x.key === key); return r ? r.label : key; }
+
+async function search(q) {
+  const m = modal;
+  m.q = q; m.searching = true; m.hits = null; renderModal();
+  try { m.hits = await api(`/api/remote/search?device=${m.device}&q=${encodeURIComponent(q)}`, undefined, "GET") || []; }
+  catch (e) { m.error = e.message; }
+  m.searching = false;
+  if (modal === m) renderModal();
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.id === "search" && e.target.value.trim()) search(e.target.value.trim());
+});
+
 // ------------------------------------------------------------- actions
 document.addEventListener("click", async (ev) => {
   const t = ev.target.closest("[data-act]");
@@ -565,6 +589,11 @@ document.addEventListener("click", async (ev) => {
       case "pair": await api("/api/pair", {}); return openModal({kind: "pair"});
       case "send": return openSend({device: t.dataset.id});
       case "get": return openSend({device: t.dataset.id, get: true});
+      case "gethit": {
+        const f = m.hits[+t.dataset.i];
+        await api("/api/fetch", {device: m.device, folder: f.folder, folderLabel: labelOf(f.folder), path: f.path, names: [f.name]});
+        return closeModal();
+      }
       case "accept": return api("/api/approve", {id: t.dataset.id, ok: true});
       case "decline": return api("/api/approve", {id: t.dataset.id, ok: false});
       case "rename": return openModal({kind: "rename"});

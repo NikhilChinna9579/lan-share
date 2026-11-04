@@ -138,3 +138,22 @@ type MkdirOK struct {
 	Type string `json:"type"` // "mkdir_ok"
 	Name string `json:"name"` // the name actually created (cleaned)
 }
+
+// SearchRequest finds files by name in all of a device's shared folders.
+type SearchRequest struct {
+	Type  string `json:"type"` // "search_request"
+	Query string `json:"query"`
+}
+
+type SearchHit struct {
+	Folder   string `json:"folder"` // shared folder key
+	Path     string `json:"path"`   // subfolder, "/"-separated ("" = top)
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified int64  `json:"modified"` // Unix milliseconds
+}
+
+type SearchResponse struct {
+	Type    string      `json:"type"` // "search_response"
+	Results []SearchHit `json:"results"`
+}

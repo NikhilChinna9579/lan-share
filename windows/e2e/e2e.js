@@ -215,6 +215,22 @@ async function step(name, fn) {
       await settle(); await page.screenshot({ path: path.join(out, "w08e-got.png") });
     });
 
+    await step("search the phone's folders and get a file from a subfolder", async () => {
+      const name = "Budget 2026.xlsx";
+      fs.rmSync(path.join(laptopDownloads, name), { force: true });
+      const src = path.join(phoneData, "inbox", "Documents", "Work", "Finance", name);
+      fs.mkdirSync(path.dirname(src), { recursive: true });
+      fs.writeFileSync(src, crypto.randomBytes(120_000));
+      await page.locator('.dev [data-act="get"]').first().click();
+      await page.locator("#search").fill("budget");
+      await page.locator("#search").press("Enter");
+      await page.locator(".r", { hasText: name }).getByText("Documents / Work / Finance").waitFor();
+      await settle(); await page.screenshot({ path: path.join(out, "w08h-search.png") });
+      await page.locator('[data-act="gethit"]').first().click();
+      const got = path.join(laptopDownloads, name);
+      await waitFor("found file on the laptop", () => fs.existsSync(got) && fs.statSync(got).size === 120_000, 15_000);
+    });
+
     await step("phone gets a file from the laptop", async () => {
       const name = "Slides.pptx";
       fs.writeFileSync(path.join(laptopDownloads, name), crypto.randomBytes(2_000_000));

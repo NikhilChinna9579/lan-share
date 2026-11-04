@@ -97,6 +97,14 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                 "list_request" -> if (browsable()) list(conn, msg) else notAllowed(conn)
                 "file_offer" -> receive(conn, peer, msg)
                 "fetch_request" -> if (browsable()) serveFetch(conn, peer, msg) else notAllowed(conn)
+                "search_request" -> if (browsable()) {
+                    val arr = JSONArray()
+                    SharedFolders.search(ctx, msg.optString("query")).forEach { h ->
+                        arr.put(JSONObject().put("folder", h.folder).put("path", h.path).put("name", h.name)
+                            .put("size", h.size).put("modified", h.modified))
+                    }
+                    conn.send(JSONObject().put("type", "search_response").put("results", arr))
+                } else notAllowed(conn)
                 "mkdir_request" -> {
                     val made = runCatching { SharedFolders.mkdir(ctx, msg.optString("folder"), msg.optString("path"), msg.optString("name")) }
                     made.onSuccess { conn.send(JSONObject().put("type", "mkdir_ok").put("name", it)) }
