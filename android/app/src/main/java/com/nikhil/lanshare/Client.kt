@@ -57,6 +57,13 @@ object Client {
     }.isSuccess
 
     /** Asks which folders the laptop offers. Returns (default key, folders). */
+    fun list(device: Device, myName: String, folderKey: String, path: String): List<String> =
+        PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            conn.send(JSONObject().put("type", "list_request").put("folder", folderKey).put("path", path))
+            val dirs = conn.expect("list_response").optJSONArray("dirs") ?: JSONArray()
+            (0 until dirs.length()).map { dirs.getString(it) }
+        }
+
     fun folders(device: Device, myName: String): Pair<String, List<Folder>> =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
             conn.send(JSONObject().put("type", "folders_request"))
