@@ -108,7 +108,7 @@ class ReceiveService : Service() {
         val n = Notification.Builder(this, CH_RECEIVED)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle(single?.let { "Received ${it.name}" } ?: "Received ${plural(r.files.size, "file")}")
-            .setContentText("From ${r.from} · ${formatSize(total)} · in ${r.folderLabel}")
+            .setContentText("From ${r.from} · ${formatSize(total)} · in ${r.where}")
             .setContentIntent(pi)
             .setAutoCancel(true)
             .build()

@@ -44,6 +44,7 @@ jobs:
         working-directory: windows
         run: go build -o ../bin/lanshare ./cmd/lanshare
       - name: Run on emulator
+        timeout-minutes: 25
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -54,11 +55,13 @@ jobs:
           disk-size: 3000M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash .github/scripts/emulator-check.sh
+          # The check itself is capped at 12 minutes; every command inside has its own limit.
+          script: timeout 720 bash .github/scripts/emulator-check.sh
       - name: Publish screenshots to the checks branch
         if: always()
         run: |
           mkdir -p check-out && cd check-out
+          cat RESULTS.txt 2>/dev/null || true
           printf 'branch: %s\ncommit: %s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" > RUN.txt
           git init -q -b checks
           git config user.name "github-actions[bot]"

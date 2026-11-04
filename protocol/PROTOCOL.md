@@ -62,7 +62,7 @@ Every control message is a frame:
 | --- | --- | --- | --- |
 | `hello` | both, first frame | `v` (int), `name` (string), `platform` | Version mismatch → `error` `version`, close |
 | `ping` | client → server | — | |
-| `pong` | server → client | — | |
+| `pong` | server → client | `reach` (bool, optional) | `false` = "I can't connect back to you" (usually a firewall on the pinging device) |
 | `error` | either | `code` (string), `message` (string) | See codes below |
 
 ### Pairing
@@ -82,22 +82,30 @@ The QR code encodes this JSON (as text):
 The one-time code is random, valid for **2 minutes**, and dies after one use or
 **5 wrong attempts**.
 
-### Folders
+### Shared folders
+
+Each device decides which of its folders it shares. Only those (and their subfolders)
+can be saved into or browsed; nothing else on the device is reachable, so system
+folders never appear.
 
 | Type | Direction | Fields |
 | --- | --- | --- |
-| `folders_request` | sender → receiver | — |
-| `folders_response` | receiver → sender | `default` (folder key), `folders`: list of `{key, label}` |
+| `folders_request` | either | — |
+| `folders_response` | reply | `default` (folder key), `folders`: list of `{key, label}` |
+| `list_request` | either | `folder` (key), `path` (subfolder, `/`-separated, optional) |
+| `list_response` | reply | `folder`, `path`, `dirs`: names, `files`: list of `{name, size, modified}` (ms) |
 
-Folder **keys** (e.g. `downloads`, `documents`, `pictures`, `recent:3`) are what travel
-on the wire — never full paths. The receiver maps keys to real paths itself, so a sender
-can never write outside the folders the receiver offers.
+Folder **keys** (e.g. `downloads`, `documents`, `f-3a9c12be`) are what travel on the wire,
+never full paths. The receiver maps keys to real paths itself and rejects any `path` that
+would leave the shared folder (`..`, links, junctions) with `error` `bad_folder`. Hidden
+and system items are not listed. A device may share folders it can't list subfolders of
+(for example Android's standard folders); it then returns empty `dirs`.
 
 ### Transfer
 
 | Type | Direction | Fields |
 | --- | --- | --- |
-| `file_offer` | sender → receiver | `transfer_id` (UUID), `folder` (key), `files`: list of `{name, size}` |
+| `file_offer` | sender → receiver | `transfer_id` (UUID), `folder` (key), `path` (subfolder, optional), `files`: list of `{name, size}` |
 | `file_accept` | receiver → sender | `transfer_id` |
 | `file_reject` | receiver → sender | `transfer_id`, `reason`: `declined`, `no_space`, `bad_folder`, `bad_name` |
 | *(raw bytes)* | sender → receiver | exactly `size` bytes of the current file |

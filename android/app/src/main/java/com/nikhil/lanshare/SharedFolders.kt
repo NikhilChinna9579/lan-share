@@ -1,0 +1,227 @@
+package com.nikhil.lanshare
+
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
+import android.provider.MediaStore
+import android.webkit.MimeTypeMap
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.OutputStream
+import java.security.MessageDigest
+
+/**
+ * The folders on this phone that paired laptops may save into (and, later, browse).
+ * Nothing else is reachable, so system folders can never be touched.
+ *
+ * Two kinds:
+ *  - Standard folders (Downloads, Documents, Pictures, Camera, Movies, Music), written
+ *    through MediaStore. No storage permission needed; can be switched off.
+ *  - Folders the user picks with Android's own folder picker ("Add a folder"). Android
+ *    grants access to exactly that folder and its subfolders, which can be browsed.
+ */
+object SharedFolders {
+
+    data class Root(val key: String, val label: String, val dir: String?, val tree: Uri?) {
+        val builtin get() = tree == null
+    }
+
+    val STANDARD = listOf(
+        Root("downloads", "Downloads", "Download/", null),
+        Root("documents", "Documents", "Documents/", null),
+        Root("pictures", "Pictures", "Pictures/", null),
+        Root("camera", "Camera", "DCIM/Camera/", null),
+        Root("movies", "Movies", "Movies/", null),
+        Root("music", "Music", "Music/", null),
+    )
+    const val DEFAULT = "downloads"
+
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("shared_folders", Context.MODE_PRIVATE)
+
+    fun roots(ctx: Context): List<Root> {
+        val off = prefs(ctx).getStringSet("off", emptySet())!!
+        val trees = JSONArray(prefs(ctx).getString("trees", "[]"))
+        return STANDARD.filter { it.key !in off } + (0 until trees.length()).map {
+            val o = trees.getJSONObject(it)
+            Root(o.getString("key"), o.getString("label"), null, Uri.parse(o.getString("uri")))
+        }
+    }
+
+    fun isOn(ctx: Context, key: String) = key !in prefs(ctx).getStringSet("off", emptySet())!!
+
+    fun setStandard(ctx: Context, key: String, on: Boolean) {
+        val off = prefs(ctx).getStringSet("off", emptySet())!!.toMutableSet()
+        if (on) off -= key else off += key
+        prefs(ctx).edit().putStringSet("off", off).apply()
+    }
+
+    fun trees(ctx: Context): List<Root> = roots(ctx).filter { !it.builtin }
+
+    /** Shares a folder picked with ACTION_OPEN_DOCUMENT_TREE and keeps access to it. */
+    fun addTree(ctx: Context, uri: Uri): Root {
+        ctx.contentResolver.takePersistableUriPermission(uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        val docId = DocumentsContract.getTreeDocumentId(uri)
+        val label = queryName(ctx, DocumentsContract.buildDocumentUriUsingTree(uri, docId))
+            ?: docId.substringAfterLast(':').substringAfterLast('/').ifEmpty { "Folder" }
+        val key = "t-" + MessageDigest.getInstance("SHA-256").digest(uri.toString().toByteArray()).toHex().take(8)
+        val arr = JSONArray(prefs(ctx).getString("trees", "[]"))
+        if ((0 until arr.length()).none { arr.getJSONObject(it).getString("key") == key }) {
+            arr.put(JSONObject().put("key", key).put("label", label).put("uri", uri.toString()))
+            prefs(ctx).edit().putString("trees", arr.toString()).apply()
+        }
+        return Root(key, label, null, uri)
+    }
+
+    fun removeTree(ctx: Context, key: String) {
+        val arr = JSONArray(prefs(ctx).getString("trees", "[]"))
+        val keep = JSONArray()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            if (o.getString("key") == key) {
+                runCatching {
+                    ctx.contentResolver.releasePersistableUriPermission(Uri.parse(o.getString("uri")),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                }
+            } else {
+                keep.put(o)
+            }
+        }
+        prefs(ctx).edit().putString("trees", keep.toString()).apply()
+    }
+
+    // ------------------------------------------------------------- browsing
+
+    class Listing(val dirs: List<String>, val files: List<Triple<String, Long, Long>>) // name, size, modified
+
+    /** Subfolders and files at [path] inside a shared folder. Standard folders list nothing. */
+    fun list(ctx: Context, key: String, path: String): Listing {
+        val root = roots(ctx).firstOrNull { it.key == key } ?: throw IllegalArgumentException("bad_folder")
+        val tree = root.tree ?: return Listing(emptyList(), emptyList())
+        val dirId = resolveDir(ctx, tree, path) ?: throw IllegalArgumentException("bad_folder")
+        val dirs = mutableListOf<String>()
+        val files = mutableListOf<Triple<String, Long, Long>>()
+        children(ctx, tree, dirId) { _, name, mime, size, modified ->
+            if (name.startsWith(".")) return@children // hidden
+            if (mime == DocumentsContract.Document.MIME_TYPE_DIR) dirs += name else files += Triple(name, size, modified)
+        }
+        return Listing(dirs.sortedBy { it.lowercase() }, files.sortedBy { it.first.lowercase() }.take(2000))
+    }
+
+    // ------------------------------------------------------------- saving
+
+    /** A file being received: write to [out], then [finish] or [discard]. */
+    class Incoming(val uri: Uri, val mime: String, val out: OutputStream, val savedIn: String,
+                   private val ctx: Context, private val pending: Boolean) {
+        fun finish(): String {
+            out.close()
+            if (pending) {
+                ctx.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+            }
+            return queryName(ctx, uri) ?: "file"
+        }
+
+        fun discard() {
+            runCatching { out.close() }
+            runCatching {
+                if (pending) ctx.contentResolver.delete(uri, null, null) else DocumentsContract.deleteDocument(ctx.contentResolver, uri)
+            }
+        }
+    }
+
+    fun create(ctx: Context, key: String, path: String, name: String): Incoming {
+        val root = roots(ctx).firstOrNull { it.key == key } ?: throw IllegalArgumentException("bad_folder")
+        val mime = mimeOf(name)
+        val parts = cleanPath(path) ?: throw IllegalArgumentException("bad_folder")
+        if (root.tree != null) {
+            val dirId = resolveDir(ctx, root.tree, path) ?: throw IllegalArgumentException("bad_folder")
+            val doc = DocumentsContract.createDocument(ctx.contentResolver,
+                DocumentsContract.buildDocumentUriUsingTree(root.tree, dirId), mime, name)
+                ?: error("Couldn't create $name")
+            val out = ctx.contentResolver.openOutputStream(doc) ?: error("Couldn't write $name")
+            return Incoming(doc, mime, out, (listOf(root.label) + parts).joinToString("/"), ctx, pending = false)
+        }
+        // Standard folder via MediaStore: each kind of file has its own collection, and
+        // each collection only accepts certain top folders. Anything that doesn't fit
+        // goes to Downloads, which accepts everything.
+        val dir = root.dir!! + parts.joinToString("") { "$it/" }
+        val top = root.dir.substringBefore('/')
+        val volume = MediaStore.VOLUME_EXTERNAL_PRIMARY
+        val collection = when {
+            top == "Download" -> MediaStore.Downloads.getContentUri(volume)
+            top == "Documents" -> MediaStore.Files.getContentUri(volume)
+            mime.startsWith("image/") && top in setOf("Pictures", "DCIM") -> MediaStore.Images.Media.getContentUri(volume)
+            mime.startsWith("video/") && top in setOf("Pictures", "DCIM", "Movies") -> MediaStore.Video.Media.getContentUri(volume)
+            mime.startsWith("audio/") && top == "Music" -> MediaStore.Audio.Media.getContentUri(volume)
+            else -> null
+        }
+        fun insert(c: android.net.Uri, d: String) = runCatching {
+            ctx.contentResolver.insert(c, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, d)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            })
+        }.getOrNull()
+        var savedIn = (listOf(root.label) + parts).joinToString("/")
+        val uri = collection?.let { insert(it, dir) } ?: run {
+            savedIn = "Downloads"
+            insert(MediaStore.Downloads.getContentUri(volume), "Download/")
+        } ?: error("Couldn't create $name")
+        val out = ctx.contentResolver.openOutputStream(uri) ?: error("Couldn't write $name")
+        return Incoming(uri, mime, out, savedIn, ctx, pending = true)
+    }
+
+    // ------------------------------------------------------------- helpers
+
+    /** Splits "Work/2026" into safe parts; null if it tries to escape (".."). */
+    fun cleanPath(path: String): List<String>? {
+        val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() && it != "." }
+        return if (parts.any { it == ".." || it.any { c -> c.isISOControl() } }) null else parts
+    }
+
+    private fun resolveDir(ctx: Context, tree: Uri, path: String): String? {
+        var id = DocumentsContract.getTreeDocumentId(tree)
+        for (part in cleanPath(path) ?: return null) {
+            var next: String? = null
+            children(ctx, tree, id) { childId, name, mime, _, _ ->
+                if (next == null && name == part && mime == DocumentsContract.Document.MIME_TYPE_DIR) next = childId
+            }
+            id = next ?: return null
+        }
+        return id
+    }
+
+    private fun children(ctx: Context, tree: Uri, parentId: String, each: (String, String, String, Long, Long) -> Unit) {
+        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        val cols = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
+        ctx.contentResolver.query(uri, cols, null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                each(c.getString(0), c.getString(1) ?: "", c.getString(2) ?: "",
+                    if (c.isNull(3)) 0 else c.getLong(3), if (c.isNull(4)) 0 else c.getLong(4))
+            }
+        }
+    }
+
+    fun sanitize(name: String): String? {
+        val base = name.substringAfterLast('/').substringAfterLast('\\')
+        val clean = base.filter { !it.isISOControl() && it !in "<>:\"|?*" }.trim().trimEnd('.', ' ')
+        return clean.takeIf { it.isNotEmpty() && it != "." && it != ".." }?.take(200)
+    }
+
+    fun mimeOf(name: String): String =
+        MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())
+            ?: "application/octet-stream"
+
+    private fun queryName(ctx: Context, uri: Uri): String? = runCatching {
+        ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    }.getOrNull()
+}

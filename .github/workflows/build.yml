@@ -22,7 +22,7 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: windows/go.mod
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... && GOOS=windows go vet ./...
       - name: Test
         run: go test -race ./...
       - name: Build phone simulator (for testing)
@@ -33,11 +33,38 @@ jobs:
           GOARCH: amd64
           CGO_ENABLED: "0"
         # -s -w strips debug info: a smaller .exe.
-        run: go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_SHA::7}" -o lanshare.exe ./cmd/lanshare
+        # -H windowsgui: a windowed app, no console window.
+        run: go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${GITHUB_SHA::7}" -o lanshare.exe ./cmd/lanshare
       - uses: actions/upload-artifact@v4
         with:
           name: lanshare-windows
           path: windows/lanshare.exe
+
+  windows-e2e:
+    name: Windows app end-to-end (window + simulated phone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: windows/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build
+        working-directory: windows
+        run: go build -o /tmp/lanshare ./cmd/lanshare && go build -o /tmp/fakephone ./cmd/fakephone
+      - name: Install browser for the test
+        run: npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
+      - name: Run
+        run: timeout 180 node windows/e2e/e2e.js /tmp/lanshare /tmp/fakephone e2e-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-e2e
+          path: e2e-out
 
   android:
     name: Android app (Kotlin)
@@ -65,7 +92,7 @@ jobs:
   # so they can be downloaded straight from GitHub's file view without unzipping.
   publish:
     name: Publish latest builds
-    needs: [windows, android]
+    needs: [windows, windows-e2e, android]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:

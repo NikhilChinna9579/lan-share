@@ -22,7 +22,11 @@ import java.util.concurrent.TimeUnit
  */
 class Presence(private val ctx: Context, private val myName: String, private val onChange: () -> Unit) {
 
-    enum class State { CHECKING, ONLINE, OFFLINE }
+    /**
+     * ONE_WAY: the laptop reaches this phone (it connected to us recently) but we can't
+     * reach it. That's nearly always Windows Firewall on the laptop blocking LAN Share.
+     */
+    enum class State { CHECKING, ONLINE, ONE_WAY, OFFLINE }
 
     data class Status(val state: State, val host: String? = null, val lastSeen: Long = 0)
 
@@ -40,8 +44,14 @@ class Presence(private val ctx: Context, private val myName: String, private val
 
     fun status(id: String): Status = statuses[id] ?: Status(State.CHECKING)
 
+    // When a laptop connects to us, re-check it at once (it may have been offline).
+    private val onHub: () -> Unit = {
+        if (DeviceStore.all(ctx).any { status(it.id).state != State.ONLINE && System.currentTimeMillis() - Hub.lastInbound(it.id) < 3_000 }) checkNow()
+    }
+
     fun start() {
         if (exec != null) return
+        Hub.listen(onHub)
         exec = Executors.newSingleThreadScheduledExecutor().also {
             it.scheduleWithFixedDelay({ runCatching { checkAll() } }, 0, CHECK_EVERY_S, TimeUnit.SECONDS)
         }
@@ -49,6 +59,7 @@ class Presence(private val ctx: Context, private val myName: String, private val
     }
 
     fun stop() {
+        Hub.unlisten(onHub)
         exec?.shutdownNow()
         exec = null
         stopDiscovery()
@@ -77,11 +88,17 @@ class Presence(private val ctx: Context, private val myName: String, private val
         if (d.host.isNotEmpty()) candidates += d.host to d.port
         for ((host, port) in candidates) {
             if (Client.ping(d, host, port, myName)) {
+                Hub.reached(d.id, true)
                 DeviceStore.updateAddress(ctx, d.id, host, port)
                 misses[d.id] = 0
                 set(d.id, Status(State.ONLINE, host, System.currentTimeMillis()))
                 return true
             }
+        }
+        Hub.reached(d.id, false)
+        if (System.currentTimeMillis() - Hub.lastInbound(d.id) < 20_000) {
+            set(d.id, Status(State.ONE_WAY, null, System.currentTimeMillis()))
+            return true // it's there; no point scanning the network for it
         }
         val m = (misses[d.id] ?: 0) + 1
         misses[d.id] = m

@@ -2,17 +2,16 @@ package com.nikhil.lanshare
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.text.format.DateUtils
 import android.view.LayoutInflater
 import android.view.View
@@ -29,15 +28,16 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
+import java.util.UUID
 import java.util.concurrent.Executors
 import javax.net.ssl.SSLException
 
 /**
- * Home screen: your paired laptops with live Online/Offline status. Tap one to send
- * files; anything shared to LAN Share from another app lands here too.
+ * Home screen: paired laptops with live status, transfers in both directions as they
+ * happen, and recent activity. Everything redraws from live state (Presence + Hub).
  */
 class MainActivity : Activity() {
-    private val worker = Executors.newSingleThreadExecutor()
+    private val worker = Executors.newCachedThreadPool()
     private val main = Handler(Looper.getMainLooper())
     private val myName by lazy { deviceName(this) }
     private lateinit var presence: Presence
@@ -49,14 +49,18 @@ class MainActivity : Activity() {
     private lateinit var cardTitle: TextView
     private lateinit var cardSubtitle: TextView
     private lateinit var cardProgress: ProgressBar
+    private lateinit var transferList: LinearLayout
     private lateinit var devicesLabel: View
     private lateinit var deviceList: LinearLayout
     private lateinit var pairAnother: View
     private lateinit var emptyState: View
+    private lateinit var recentLabel: View
+    private lateinit var recentList: LinearLayout
 
-    private var busy = false
     private var pickTarget: Device? = null
-    private val hideCard = Runnable { card.visibility = View.GONE }
+    private var cardDevice: String? = null // the message card is about this laptop
+    private val hideCard = Runnable { card.visibility = View.GONE; cardDevice = null }
+    private val onHub: () -> Unit = { renderLive() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,17 +74,16 @@ class MainActivity : Activity() {
         cardTitle = findViewById(R.id.transferTitle)
         cardSubtitle = findViewById(R.id.transferSubtitle)
         cardProgress = findViewById(R.id.transferProgress)
+        transferList = findViewById(R.id.transferList)
         devicesLabel = findViewById(R.id.devicesLabel)
         deviceList = findViewById(R.id.deviceList)
         pairAnother = findViewById(R.id.pairAnother)
         emptyState = findViewById(R.id.emptyState)
+        recentLabel = findViewById(R.id.recentLabel)
+        recentList = findViewById(R.id.recentList)
 
         val steps = findViewById<LinearLayout>(R.id.steps)
-        listOf(
-            "Open LAN Share on your laptop",
-            "Tap Scan QR code below",
-            "Scan the code on the laptop's screen",
-        ).forEachIndexed { i, text ->
+        listOf("Open LAN Share on your laptop", "Click “Show pairing code”", "Tap Scan QR code below and scan it").forEachIndexed { i, text ->
             val row = LayoutInflater.from(this).inflate(R.layout.item_step, steps, false)
             row.findViewById<TextView>(R.id.number).text = "${i + 1}"
             row.findViewById<TextView>(R.id.text).text = text
@@ -88,6 +91,7 @@ class MainActivity : Activity() {
         }
         findViewById<View>(R.id.scanButton).setOnClickListener { scanQr() }
         pairAnother.setOnClickListener { scanQr() }
+        findViewById<View>(R.id.settingsButton).setOnClickListener { showSharedFolders(firstTime = false) }
 
         presence = Presence(this, myName) { renderDevices() }
         worker.execute { runCatching { Identity.ensure(myName) } } // creating the key takes a moment
@@ -100,12 +104,14 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        Hub.listen(onHub)
         presence.start()
         render()
     }
 
     override fun onStop() {
         presence.stop()
+        Hub.unlisten(onHub)
         super.onStop()
     }
 
@@ -142,24 +148,99 @@ class MainActivity : Activity() {
     }
 
     private fun render() {
-        val devices = DeviceStore.all(this)
-        val any = devices.isNotEmpty()
+        val any = DeviceStore.all(this).isNotEmpty()
         emptyState.visibility = if (any) View.GONE else View.VISIBLE
         devicesLabel.visibility = if (any) View.VISIBLE else View.GONE
         pairAnother.visibility = if (any) View.VISIBLE else View.GONE
-        if (any) {
+        renderDevices()
+        renderLive()
+    }
+
+    /** Header, transfers and recent activity: redrawn whenever Hub changes. */
+    private fun renderLive() {
+        val any = DeviceStore.all(this).isNotEmpty()
+        if (any && ReceiveService.running) {
             dot(receiveDot, R.color.online)
             receiveStatus.text = "Ready to receive"
         } else {
             dot(receiveDot, R.color.offline)
-            receiveStatus.text = "Not paired yet"
+            receiveStatus.text = if (any) "Starting…" else "Not paired yet"
         }
+        renderTransfers()
+        renderRecent()
         renderDevices()
+    }
+
+    private fun renderTransfers() {
+        val list = Hub.visibleTransfers()
+        while (transferList.childCount > list.size) transferList.removeViewAt(transferList.childCount - 1)
+        while (transferList.childCount < list.size) {
+            transferList.addView(LayoutInflater.from(this).inflate(R.layout.item_transfer, transferList, false))
+        }
+        list.forEachIndexed { i, t ->
+            val v = transferList.getChildAt(i)
+            val icon = v.findViewById<ImageView>(R.id.tIcon)
+            val title = v.findViewById<TextView>(R.id.tTitle)
+            val sub = v.findViewById<TextView>(R.id.tSub)
+            val bar = v.findViewById<ProgressBar>(R.id.tProgress)
+            val dir = if (t.inbound) "From" else "To"
+            when (t.state) {
+                Hub.State.RUNNING -> {
+                    badge(icon, if (t.inbound) R.drawable.ic_download else R.drawable.ic_upload, R.color.primary_container, R.color.on_primary_container)
+                    title.text = (if (t.inbound) "Receiving " else "Sending ") + t.name.ifEmpty { "…" }
+                    val secs = maxOf(System.currentTimeMillis() - t.started, 1) / 1000.0
+                    sub.text = "$dir ${t.device} · ${formatSize(t.sent)} of ${formatSize(t.total)}" +
+                        if (t.sent > 0) " · ${formatSize((t.sent / secs).toLong())}/s" else ""
+                    bar.visibility = View.VISIBLE
+                    bar.progress = if (t.total > 0) (t.sent * 1000 / t.total).toInt() else 0
+                }
+                Hub.State.DONE -> {
+                    badge(icon, R.drawable.ic_check_circle, R.color.success_container, R.color.online)
+                    val what = if (t.files > 1) "${t.files} files" else t.name
+                    title.text = (if (t.inbound) "Received " else "Sent ") + what
+                    sub.text = "$dir ${t.device} · in ${t.folder} · ${formatSize(t.total)}"
+                    bar.visibility = View.GONE
+                }
+                Hub.State.ERROR -> {
+                    badge(icon, R.drawable.ic_error, R.color.error_container, R.color.error)
+                    title.text = if (t.inbound) "Receiving from ${t.device} failed" else "Couldn't send to ${t.device}"
+                    sub.text = t.message
+                    bar.visibility = View.GONE
+                }
+            }
+        }
+        // Finished cards disappear by themselves a few seconds later.
+        if (list.any { it.state != Hub.State.RUNNING }) {
+            main.removeCallbacks(refreshLater)
+            main.postDelayed(refreshLater, 2_000)
+        }
+    }
+
+    private val refreshLater = Runnable { renderTransfers() }
+
+    private fun renderRecent() {
+        val items = Hub.recent().take(8)
+        recentLabel.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
+        recentList.visibility = recentLabel.visibility
+        recentList.removeAllViews()
+        for (it in items) {
+            val v = LayoutInflater.from(this).inflate(R.layout.item_recent, recentList, false)
+            val (ic, bg, fg) = when (it.kind) {
+                "received" -> Triple(R.drawable.ic_download, R.color.success_container, R.color.online)
+                "sent" -> Triple(R.drawable.ic_upload, R.color.success_container, R.color.online)
+                "error" -> Triple(R.drawable.ic_error, R.color.error_container, R.color.error)
+                else -> Triple(R.drawable.ic_laptop, R.color.primary_container, R.color.on_primary_container)
+            }
+            badge(v.findViewById(R.id.rIcon), ic, bg, fg)
+            v.findViewById<TextView>(R.id.rText).text = it.text
+            v.findViewById<TextView>(R.id.rDetail).apply { text = it.detail; visibility = if (it.detail.isEmpty()) View.GONE else View.VISIBLE }
+            v.findViewById<TextView>(R.id.rTime).text = ago(it.time)
+            recentList.addView(v)
+        }
     }
 
     private fun renderDevices() {
         val devices = DeviceStore.all(this)
-        // Reuse rows by device id so status changes don't flicker.
         val keep = devices.map { it.id }.toSet()
         for (i in deviceList.childCount - 1 downTo 0) {
             if (deviceList.getChildAt(i).tag !in keep) deviceList.removeViewAt(i)
@@ -173,6 +254,8 @@ class MainActivity : Activity() {
             }
             bindDevice(row!!, d)
         }
+        // A problem message about a laptop goes away as soon as that laptop is fine.
+        cardDevice?.let { id -> if (presence.status(id).state == Presence.State.ONLINE) hideCard.run() }
     }
 
     private fun bindDevice(row: View, d: Device) {
@@ -180,59 +263,77 @@ class MainActivity : Activity() {
         row.findViewById<TextView>(R.id.name).text = d.name
         val status = row.findViewById<TextView>(R.id.status)
         val dotView = row.findViewById<View>(R.id.statusDot)
+        val sendBtn = row.findViewById<Button>(R.id.send)
         when (s.state) {
             Presence.State.ONLINE -> {
                 status.text = "Online · ${s.host}"
                 dot(dotView, R.color.online)
+            }
+            Presence.State.ONE_WAY -> {
+                status.text = "Can't connect to it · check its firewall"
+                dot(dotView, R.color.checking)
             }
             Presence.State.CHECKING -> {
                 status.text = "Looking for it on the Wi-Fi…"
                 dot(dotView, R.color.checking)
             }
             Presence.State.OFFLINE -> {
-                val seen = if (s.lastSeen > 0) " · seen " +
-                    DateUtils.getRelativeTimeSpanString(s.lastSeen, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS) else ""
-                status.text = "Offline$seen"
+                status.text = "Offline" + if (s.lastSeen > 0) " · seen ${ago(s.lastSeen)}" else ""
                 dot(dotView, R.color.offline)
             }
         }
-        val send = { if (!busy) pickFiles(d) }
-        row.setOnClickListener { send() }
-        row.findViewById<Button>(R.id.send).setOnClickListener { send() }
+        sendBtn.isEnabled = s.state == Presence.State.ONLINE
+        val tap = {
+            when (s.state) {
+                Presence.State.ONLINE -> pickFiles(d)
+                Presence.State.ONE_WAY -> showOneWay(d)
+                else -> showCard(Kind.ERROR, "${d.name} is offline",
+                    "Open LAN Share on it, and check both are on the same Wi-Fi.", device = d.id)
+            }
+        }
+        row.setOnClickListener { tap() }
+        sendBtn.setOnClickListener { tap() }
         row.setOnLongClickListener { confirmForget(d); true }
     }
+
+    private fun showOneWay(d: Device) = showCard(Kind.ERROR, "This phone can't connect to ${d.name}",
+        "${d.name} can reach this phone, so Windows Firewall is blocking the other direction. " +
+            "On the laptop: LAN Share → Settings → Allow through Windows Firewall.", device = d.id)
 
     private fun dot(v: View, color: Int) {
         (v.background.mutate() as GradientDrawable).setColor(getColor(color))
     }
 
-    // ------------------------------------------------------------------ status card
+    private fun badge(v: ImageView, icon: Int, bg: Int, fg: Int) {
+        v.setImageResource(icon)
+        (v.background.mutate() as GradientDrawable).setColor(getColor(bg))
+        v.imageTintList = ColorStateList.valueOf(getColor(fg))
+    }
+
+    private fun ago(t: Long): String =
+        if (System.currentTimeMillis() - t < 60_000) "just now"
+        else DateUtils.getRelativeTimeSpanString(t, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+
+    // ------------------------------------------------------------------ message card
 
     private enum class Kind { WORKING, DONE, ERROR }
 
-    /** Shows the card at the top. [progress] 0–1000, or null for none. */
-    private fun showCard(kind: Kind, title: String, subtitle: String, progress: Int? = null, autoHide: Boolean = false) {
+    /** Pairing progress and problems. Errors hide by themselves, or when fixed. */
+    private fun showCard(kind: Kind, title: String, subtitle: String, device: String? = null) {
         main.removeCallbacks(hideCard)
+        cardDevice = device
         card.visibility = View.VISIBLE
         cardTitle.text = title
         cardSubtitle.text = subtitle
         cardSubtitle.visibility = if (subtitle.isEmpty()) View.GONE else View.VISIBLE
-        val (icon, bg, fg) = when (kind) {
-            Kind.WORKING -> Triple(R.drawable.ic_upload, R.color.primary_container, R.color.on_primary_container)
-            Kind.DONE -> Triple(R.drawable.ic_check_circle, R.color.success_container, R.color.online)
-            Kind.ERROR -> Triple(R.drawable.ic_error, R.color.error_container, R.color.error)
+        when (kind) {
+            Kind.WORKING -> badge(cardIcon, R.drawable.ic_upload, R.color.primary_container, R.color.on_primary_container)
+            Kind.DONE -> badge(cardIcon, R.drawable.ic_check_circle, R.color.success_container, R.color.online)
+            Kind.ERROR -> badge(cardIcon, R.drawable.ic_error, R.color.error_container, R.color.error)
         }
-        cardIcon.setImageResource(icon)
-        (cardIcon.background.mutate() as GradientDrawable).setColor(getColor(bg))
-        cardIcon.imageTintList = android.content.res.ColorStateList.valueOf(getColor(fg))
-        if (progress == null) {
-            cardProgress.visibility = View.GONE
-        } else {
-            cardProgress.visibility = View.VISIBLE
-            cardProgress.isIndeterminate = progress < 0
-            if (progress >= 0) cardProgress.progress = progress
-        }
-        if (autoHide) main.postDelayed(hideCard, 6_000)
+        cardProgress.visibility = if (kind == Kind.WORKING) View.VISIBLE else View.GONE
+        cardProgress.isIndeterminate = true
+        if (kind != Kind.WORKING) main.postDelayed(hideCard, if (kind == Kind.ERROR) 12_000 else 6_000)
     }
 
     // ------------------------------------------------------------------ pairing
@@ -248,24 +349,24 @@ class MainActivity : Activity() {
     }
 
     private fun pair(qrText: String) {
-        busy = true
-        showCard(Kind.WORKING, "Pairing…", "Talking to the laptop", progress = -1)
+        showCard(Kind.WORKING, "Pairing…", "Talking to the laptop")
         worker.execute {
             val result = runCatching { Identity.ensure(myName); Client.pair(this, qrText, myName) }
             main.post {
-                busy = false
                 result.onSuccess {
-                    showCard(Kind.DONE, "Paired with ${it.name}", "You won't need to scan again.", autoHide = true)
+                    showCard(Kind.DONE, "Paired with ${it.name}", "You won't need to scan again.")
+                    Hub.add("paired", "Paired with ${it.name}")
                     ReceiveService.start(this)
                     render()
                     presence.checkNow()
+                    if (!isFinishing) showSharedFolders(firstTime = true)
                 }.onFailure { showCard(Kind.ERROR, "Pairing didn't work", friendly(it, null)) }
             }
         }
     }
 
     private fun confirmForget(d: Device) {
-        AlertDialog.Builder(this)
+        android.app.AlertDialog.Builder(this)
             .setTitle("Forget ${d.name}?")
             .setMessage("It won't be able to send to this phone, and you'll need to scan its QR code again to pair.")
             .setPositiveButton("Forget") { _, _ ->
@@ -275,6 +376,43 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    // ------------------------------------------------------------------ shared folders on this phone
+
+    private var foldersSheet: Sheet? = null
+
+    private fun showSharedFolders(firstTime: Boolean) {
+        val sheet = Sheet(this, "Shared folders",
+            if (firstTime) "Choose which folders your laptops can save into. You can change this any time with ⚙."
+            else "Your laptops can save into these folders, and nothing else on this phone.")
+        foldersSheet = sheet
+        fillSharedFolders(sheet)
+        sheet.primary("Done")
+        sheet.show()
+    }
+
+    private fun fillSharedFolders(sheet: Sheet) {
+        sheet.clear()
+        for (r in SharedFolders.STANDARD) {
+            val on = SharedFolders.isOn(this, r.key)
+            sheet.add(Sheet.Row(folderIcon(r.key), r.label, sub = r.dir!!.trimEnd('/').replace("/", " / "),
+                trail = if (on) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+                SharedFolders.setStandard(this, r.key, !on)
+                fillSharedFolders(sheet)
+            })
+        }
+        for (r in SharedFolders.trees(this)) {
+            sheet.add(Sheet.Row(R.drawable.ic_folder, r.label, sub = "Added by you · subfolders included",
+                trail = Sheet.Trail.REMOVE, dismiss = false, onRemove = {
+                    SharedFolders.removeTree(this, r.key)
+                    fillSharedFolders(sheet)
+                }) {})
+        }
+        sheet.add(Sheet.Row(R.drawable.ic_add, "Add a folder…", sub = "Any folder you choose, e.g. on your SD card", dismiss = false) {
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_TREE)
+        })
     }
 
     // ------------------------------------------------------------------ sending
@@ -294,8 +432,18 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK || data == null) return
+        if (requestCode == REQUEST_TREE) {
+            data.data?.let { uri ->
+                runCatching { SharedFolders.addTree(this, uri) }
+                    .onSuccess { r -> Hub.add("info", "Sharing ${r.label}", "Laptops can save into it and its subfolders") }
+                    .onFailure { showCard(Kind.ERROR, "Couldn't share that folder", it.message ?: "") }
+                foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
+            }
+            return
+        }
         val target = pickTarget ?: return
-        if (requestCode != REQUEST_PICK || resultCode != RESULT_OK || data == null) return
+        if (requestCode != REQUEST_PICK) return
         val uris = mutableListOf<Uri>()
         data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris += clip.getItemAt(i).uri }
         if (uris.isEmpty()) data.data?.let { uris += it }
@@ -322,68 +470,96 @@ class MainActivity : Activity() {
                 val sheet = Sheet(this, "Send to…", plural(uris.size, "file"))
                 devices.forEach { d ->
                     val online = presence.status(d.id).state == Presence.State.ONLINE
-                    sheet.add(Sheet.Row(R.drawable.ic_laptop, d.name, if (online) "Online" else null) { chooseFolder(d, uris) })
+                    sheet.add(Sheet.Row(R.drawable.ic_laptop, d.name, chip = if (online) "Online" else null) { chooseFolder(d, uris) })
                 }
                 sheet.show()
             }
         }
     }
 
-    /** Requirement: when no folder was named, always ask. */
+    /**
+     * Where to save on the laptop: its shared folders, and their subfolders.
+     * Requirement: when no folder was named, always ask.
+     */
     private fun chooseFolder(d: Device, uris: List<Uri>) {
-        busy = true
-        showCard(Kind.WORKING, "Connecting to ${d.name}…", "", progress = -1)
         worker.execute {
-            val result = runCatching {
-                val items = Client.resolveFiles(this, uris)
-                items to Client.folders(DeviceStore.get(this, d.id) ?: d, myName)
+            val items = runCatching { Client.resolveFiles(this, uris) }.getOrElse {
+                main.post { showCard(Kind.ERROR, "Couldn't read that file", it.message ?: "") }
+                return@execute
             }
             main.post {
-                busy = false
-                result.onFailure { showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(it, d)) }
-                result.onSuccess { (items, folders) ->
-                    card.visibility = View.GONE
-                    val (defaultKey, list) = folders
-                    val sheet = Sheet(this, "Save on ${d.name}", "${plural(items.size, "file")} · ${formatSize(items.sumOf { it.size })}")
-                    list.forEach { f ->
-                        sheet.add(Sheet.Row(folderIcon(f.key), f.label, if (f.key == defaultKey) "Default" else null) {
-                            send(d, f, items)
-                        })
+                val sheet = Sheet(this, "Save on ${d.name}", "${plural(items.size, "file")} · ${formatSize(items.sumOf { it.size })}")
+                sheet.message("Asking ${d.name} for its folders…")
+                sheet.show()
+                worker.execute {
+                    val r = runCatching { Client.folders(DeviceStore.get(this, d.id) ?: d, myName) }
+                    main.post {
+                        r.onFailure { sheet.dismiss(); showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(it, d), device = d.id) }
+                        r.onSuccess { (defaultKey, roots) -> showRoots(sheet, d, items, defaultKey, roots) }
                     }
-                    sheet.show()
                 }
             }
         }
     }
 
-    private fun send(d: Device, folder: Client.Folder, items: List<Client.Outgoing>) {
-        busy = true
-        val total = items.sumOf { it.size }
-        val what = items.singleOrNull()?.name ?: plural(items.size, "file")
-        showCard(Kind.WORKING, "Sending $what", "To ${d.name} · ${folder.label}", progress = 0)
+    private fun showRoots(sheet: Sheet, d: Device, items: List<Client.Outgoing>, defaultKey: String, roots: List<Client.Folder>) {
+        sheet.clear()
+        sheet.crumb(null, null)
+        sheet.primary(null)
+        if (roots.isEmpty()) sheet.message("${d.name} isn't sharing any folders. Add one in LAN Share → Settings on the laptop.")
+        roots.forEach { f ->
+            sheet.add(Sheet.Row(folderIcon(f.key), f.label, chip = if (f.key == defaultKey) "Default" else null,
+                trail = Sheet.Trail.CHEVRON, dismiss = false) {
+                browse(sheet, d, items, defaultKey, roots, f, emptyList())
+            })
+        }
+    }
+
+    private fun browse(sheet: Sheet, d: Device, items: List<Client.Outgoing>, defaultKey: String,
+                       roots: List<Client.Folder>, folder: Client.Folder, path: List<String>) {
+        sheet.clear()
+        sheet.crumb((listOf(folder.label) + path).joinToString("  ›  ")) {
+            if (path.isEmpty()) showRoots(sheet, d, items, defaultKey, roots)
+            else browse(sheet, d, items, defaultKey, roots, folder, path.dropLast(1))
+        }
+        val where = (listOf(folder.label) + path).joinToString("/")
+        sheet.primary("Save here · $where") { send(d, folder, path.joinToString("/"), where, items) }
+        sheet.message("Loading…")
         worker.execute {
-            val started = SystemClock.elapsedRealtime()
-            var lastUi = 0L
-            val result = runCatching {
-                Client.send(DeviceStore.get(this, d.id) ?: d, myName, folder.key, items) { sent, all ->
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastUi > 120 || sent == all) {
-                        lastUi = now
-                        val speed = sent * 1000 / maxOf(now - started, 1)
-                        main.post {
-                            cardProgress.progress = if (all == 0L) 1000 else (sent * 1000 / all).toInt()
-                            cardSubtitle.text = "${formatSize(sent)} of ${formatSize(all)} · ${formatSize(speed)}/s"
-                        }
-                    }
+            val r = runCatching { Client.list(DeviceStore.get(this, d.id) ?: d, myName, folder.key, path.joinToString("/")) }
+            main.post {
+                if (!sheet.isShowing) return@post
+                sheet.clear()
+                val dirs = r.getOrElse { emptyList() }
+                if (r.isFailure) sheet.message("Couldn't list this folder: ${friendly(r.exceptionOrNull()!!, d)}")
+                else if (dirs.isEmpty()) sheet.message("No subfolders here.")
+                dirs.forEach { name ->
+                    sheet.add(Sheet.Row(R.drawable.ic_folder, name, trail = Sheet.Trail.CHEVRON, dismiss = false) {
+                        browse(sheet, d, items, defaultKey, roots, folder, path + name)
+                    })
                 }
             }
-            main.post {
-                busy = false
-                val secs = (SystemClock.elapsedRealtime() - started) / 1000.0
-                result.onSuccess {
-                    showCard(Kind.DONE, "Sent $what to ${d.name}",
-                        "In ${folder.label} · ${formatSize(total)} in ${String.format("%.1f", secs)} s", autoHide = true)
-                }.onFailure { showCard(Kind.ERROR, "Couldn't send to ${d.name}", friendly(it, d)) }
+        }
+    }
+
+    private fun send(d: Device, folder: Client.Folder, path: String, where: String, items: List<Client.Outgoing>) {
+        val id = UUID.randomUUID().toString()
+        val total = items.sumOf { it.size }
+        Hub.transfer(id, false, d.name) { it.total = total; it.name = items.first().name }
+        worker.execute {
+            val result = runCatching {
+                Client.send(DeviceStore.get(this, d.id) ?: d, myName, folder.key, path, items) { sent, _ ->
+                    Hub.transfer(id, false, d.name) { t -> t.sent = sent }
+                }
+            }
+            result.onSuccess {
+                Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.DONE; t.sent = total; t.files = items.size; t.folder = where }
+                val what = items.singleOrNull()?.name ?: plural(items.size, "file")
+                Hub.add("sent", "Sent $what to ${d.name}", "In $where · ${formatSize(total)}")
+            }.onFailure { e ->
+                val msg = friendly(e, d)
+                Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.ERROR; t.message = msg }
+                Hub.add("error", "Couldn't send to ${d.name}", msg)
             }
         }
     }
@@ -391,11 +567,13 @@ class MainActivity : Activity() {
     /** Turns exceptions into something a person can act on. */
     private fun friendly(e: Throwable, d: Device?): String {
         val name = d?.name ?: "the laptop"
+        if (d != null && presence.status(d.id).state == Presence.State.ONE_WAY) {
+            return "$name can reach this phone, but not the other way: on the laptop open LAN Share → Settings → Allow through Windows Firewall."
+        }
         return when (e) {
             is ConnectException, is SocketTimeoutException, is NoRouteToHostException ->
-                "Is LAN Share open on $name, on the same Wi-Fi? If Windows asked about the firewall, choose Allow."
-            is SSLException ->
-                "$name didn't recognise this phone. Long-press it, choose Forget, and pair again."
+                "Is LAN Share running on $name, on the same Wi-Fi? If Windows asked about the firewall, choose Allow."
+            is SSLException -> "$name didn't recognise this phone. Long-press it, choose Forget, and pair again."
             is IOException -> "The connection dropped (${e.message}). Try again."
             else -> e.message ?: e.toString()
         }
@@ -410,8 +588,8 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------------ test hooks
 
     /**
-     * Debug builds only, for automated screenshots and tests on an emulator. The files can
-     * only be written by this app itself or over a USB-debugging connection ("run-as").
+     * Debug builds only, for automated tests and screenshots on an emulator. These files
+     * can only be written by this app itself or over USB debugging ("run-as").
      */
     private fun runTestHooks() {
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
@@ -425,17 +603,16 @@ class MainActivity : Activity() {
             f.delete()
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
             when (mode) {
-                "add_offline" -> {
-                    DeviceStore.put(this, Device("0".repeat(64), "Office PC", "10.0.2.99", Protocol.DEFAULT_PORT, 0))
-                    render()
-                }
-                "sending" -> showCard(Kind.WORKING, "Sending holiday-photos.zip", "38.4 MB of 61.0 MB · 21.7 MB/s", progress = 630)
-                "done" -> showCard(Kind.DONE, "Sent 3 files to ${d.name}", "In Documents · 4.2 MB in 0.4 s")
-                "error" -> showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(ConnectException(), d))
+                "add_offline" -> { DeviceStore.put(this, Device("0".repeat(64), "Office PC", "10.0.2.99", Protocol.DEFAULT_PORT, 0)); render() }
+                "sending" -> Hub.transfer("demo-out", false, d.name) { it.name = "holiday-photos.zip"; it.total = 64_000_000; it.sent = 40_300_000 }
+                "receiving" -> Hub.transfer("demo-in", true, d.name) { it.name = "Quarterly report.pdf"; it.total = 9_000_000; it.sent = 2_700_000 }
+                "error" -> showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(ConnectException(), d), device = d.id)
+                "folders" -> showSharedFolders(firstTime = true)
                 "sheet" -> {
                     val sheet = Sheet(this, "Save on ${d.name}", "2 files · 8.4 MB")
-                    listOf("downloads" to "Downloads", "documents" to "Documents", "pictures" to "Pictures", "desktop" to "Desktop")
-                        .forEach { (k, l) -> sheet.add(Sheet.Row(folderIcon(k), l, if (k == "downloads") "Default" else null) {}) }
+                    sheet.crumb("Documents  ›  Work", null)
+                    listOf("2025", "2026", "Invoices", "Reports").forEach { sheet.add(Sheet.Row(R.drawable.ic_folder, it, trail = Sheet.Trail.CHEVRON) {}) }
+                    sheet.primary("Save here · Documents/Work")
                     sheet.show()
                 }
             }
@@ -445,5 +622,6 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_PICK = 1
         private const val REQUEST_NOTIFY = 2
+        private const val REQUEST_TREE = 3
     }
 }

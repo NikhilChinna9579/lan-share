@@ -67,9 +67,27 @@
                         android:textSize="13sp" />
                 </LinearLayout>
             </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/settingsButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="Shared folders and settings"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_settings"
+                android:tint="@color/ink_muted" />
         </LinearLayout>
 
-        <!-- Transfer / message card -->
+        <!-- Transfers in progress (both directions), live -->
+        <LinearLayout
+            android:id="@+id/transferList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <!-- Message card (pairing, problems) -->
         <LinearLayout
             android:id="@+id/transferCard"
             android:layout_width="match_parent"
@@ -208,6 +226,26 @@
                 android:drawableStart="@drawable/ic_qr"
                 android:text="Scan QR code" />
         </LinearLayout>
+
+        <!-- Recent activity -->
+        <TextView
+            android:id="@+id/recentLabel"
+            style="@style/Text.Section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="10dp"
+            android:text="Recent activity" />
+
+        <LinearLayout
+            android:id="@+id/recentList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp" />
 
         <!-- Tip -->
         <LinearLayout

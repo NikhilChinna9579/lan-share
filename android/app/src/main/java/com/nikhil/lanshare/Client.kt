@@ -73,12 +73,12 @@ object Client {
      * Sends [items] into [folderKey] (PROTOCOL.md §5, Transfer). Blocking.
      * [progress] gets (bytes sent so far, total). Returns the names the laptop saved.
      */
-    fun send(device: Device, myName: String, folderKey: String, items: List<Outgoing>, progress: (Long, Long) -> Unit): List<String> =
+    fun send(device: Device, myName: String, folderKey: String, path: String, items: List<Outgoing>, progress: (Long, Long) -> Unit): List<String> =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
             val files = JSONArray()
             items.forEach { files.put(JSONObject().put("name", it.name).put("size", it.size)) }
             conn.send(JSONObject().put("type", "file_offer").put("transfer_id", UUID.randomUUID().toString())
-                .put("folder", folderKey).put("files", files))
+                .put("folder", folderKey).put("path", path).put("files", files))
             val answer = conn.expect("file_accept", "file_reject")
             if (answer.getString("type") == "file_reject") {
                 throw IllegalStateException("${device.name} refused the files (${answer.optString("reason")}).")
