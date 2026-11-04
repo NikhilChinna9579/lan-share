@@ -105,6 +105,7 @@ object Hub {
             val o = arr.getJSONObject(i)
             items.addLast(Item(o.getLong("t"), o.getString("k"), o.getString("x"), o.optString("d")))
         }
+        android.util.Log.i("LanShare", "history: loaded ${items.size} items")
     }
 
     private fun save() {

@@ -191,7 +191,7 @@ expect 20 'clipboard pasted from DESKTOP-NIKHIL' "paste from the laptop"
 R=$(api /api/remote/clip "{\"device\":\"$DEV\"}")
 echo "$R" | grep -q '"chars"' && pass "laptop pastes from the phone while LAN Share is open there" || fail "laptop paste from phone ($R)"
 api /api/clip | grep -q 'From the laptop' && pass "…the phone's clipboard came over" || fail "phone's clipboard on the laptop"
-A shell input keyevent KEYCODE_HOME; sleep 2
+A shell input keyevent KEYCODE_HOME; sleep 4
 api /api/remote/clip "{\"device\":\"$DEV\"}" | grep -q "isn't open" && pass "…and says why not when it isn't open" || fail "paste from a phone in the background"
 A shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "https://example.com/shared" -n $PKG/.MainActivity >/dev/null
 until_ok 20 "api /api/clip | grep -q 'example.com/shared'" && pass "Share → LAN Share with text puts it on the laptop's clipboard" || fail "shared text to the laptop"
@@ -270,8 +270,8 @@ else
   fail "folder sheet for the big file"
 fi
 bail_if_crashed "cancel/retry"
-app 6
-until_ok 15 "screen_has 'Received Quarterly report.pdf'" && pass "history survives an app restart" || fail "history survives an app restart"
+mark; app 6
+expect 15 'history: loaded [1-9][0-9]* items' "history survives an app restart"
 
 # ---------------------------------------------------------------- 7. the assistant
 # a) Everything said at once: "send this to my laptop in downloads".

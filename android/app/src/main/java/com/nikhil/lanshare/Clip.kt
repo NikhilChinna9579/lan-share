@@ -81,7 +81,12 @@ object Clip {
     /** For a laptop's "Paste from this phone": only possible while LAN Share is on screen. */
     fun readForLaptop(ctx: Context): Pair<String?, String> {
         if (!enabled(ctx)) return null to "clipboard sharing is turned off on the phone"
-        if (onScreen.get() == 0) return null to "LAN Share isn't open on the phone (Android only lets the app on screen read the clipboard)"
+        // Android only lets the app on screen read the clipboard: check that right now.
+        val state = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(state)
+        if (onScreen.get() == 0 || state.importance > android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+            return null to "LAN Share isn't open on the phone (Android only lets the app on screen read the clipboard)"
+        }
         val cm = ctx.applicationContext.getSystemService(ClipboardManager::class.java)
         var result: Pair<String?, String> = null to "nothing is copied on the phone"
         val done = CountDownLatch(1)
