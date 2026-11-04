@@ -171,6 +171,24 @@ until_ok 30 "[ \"\$(stat -c %s '$HOME/Downloads/Quarterly report.pdf' 2>/dev/nul
   && pass "laptop got a file from the phone, intact size" || fail "laptop got a file from the phone"
 expect 10 'served 1 files to DESKTOP-NIKHIL' "phone logs what it served"
 
+# ---------------------------------------------------------------- 4a. shared clipboard
+mark; api /api/clip/copy '{"text":"Meeting at 5pm ✓"}' >/dev/null
+expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars' "copied on the laptop: it's on the phone's clipboard"
+mark; hook demo.txt send_clip; app 3
+expect 20 'clipboard sent to DESKTOP-NIKHIL: [0-9]+ chars' "the phone sends what's copied"
+until_ok 10 "api /api/clip | grep -q 'Hello from the phone'" && pass "…and it's on the laptop's clipboard" || fail "phone's text on the laptop's clipboard"
+api /api/clip/set '{"text":"From the laptop 💻"}' >/dev/null
+mark; hook demo.txt paste_from; app 3
+expect 20 'clipboard pasted from DESKTOP-NIKHIL' "paste from the laptop"
+R=$(api /api/remote/clip "{\"device\":\"$DEV\"}")
+echo "$R" | grep -q '"chars"' && pass "laptop pastes from the phone while LAN Share is open there" || fail "laptop paste from phone ($R)"
+api /api/clip | grep -q 'From the laptop' && pass "…the phone's clipboard came over" || fail "phone's clipboard on the laptop"
+A shell input keyevent KEYCODE_HOME; sleep 2
+api /api/remote/clip "{\"device\":\"$DEV\"}" | grep -q "isn't open" && pass "…and says why not when it isn't open" || fail "paste from a phone in the background"
+A shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "https://example.com/shared" -n $PKG/.MainActivity >/dev/null
+until_ok 20 "api /api/clip | grep -q 'example.com/shared'" && pass "Share → LAN Share with text puts it on the laptop's clipboard" || fail "shared text to the laptop"
+bail_if_crashed "clipboard"
+
 # ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off
 mkdir -p "$WORK/Trip/Day 2"; head -c 70000 /dev/urandom > "$WORK/Trip/a.jpg"; head -c 80000 /dev/urandom > "$WORK/Trip/Day 2/b.jpg"
 timeout 60 ./bin/lanshare -data "$LAPTOP_DATA" -folder downloads send "$WORK/Trip" > "$OUT/send-folder.log" 2>&1

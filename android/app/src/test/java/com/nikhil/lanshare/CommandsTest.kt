@@ -39,6 +39,18 @@ class CommandsTest {
 
     @Test fun status() = assertEquals(Command.Status("Office PC"), Commands.parse("is the office pc online?", two))
 
+    @Test fun sendClipboard() =
+        assertEquals(Command.Send(What.CLIPBOARD, null, "DESKTOP-NIKHIL", null), send("send my clipboard to my laptop"))
+
+    @Test fun sendWhatICopied() =
+        assertEquals(Command.Send(What.CLIPBOARD, null, "Office PC", null), send("send what I copied to the office pc", two))
+
+    @Test fun pasteFrom() = assertEquals(Command.Paste("DESKTOP-NIKHIL"), Commands.parse("paste from my laptop", one))
+
+    @Test fun getClipboard() = assertEquals(Command.Paste("Office PC"), Commands.parse("get the clipboard from office pc", two))
+
+    @Test fun pasteNoDevice() = assertEquals(Command.Paste(null), Commands.parse("paste", two))
+
     @Test fun nonsense() = assertEquals(Command.Unknown, Commands.parse("what's the weather", one))
 
     @Test fun folders() {

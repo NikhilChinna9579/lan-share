@@ -157,3 +157,26 @@ type SearchResponse struct {
 	Type    string      `json:"type"` // "search_response"
 	Results []SearchHit `json:"results"`
 }
+
+// ClipPush puts text on the other device's clipboard (shared clipboard).
+type ClipPush struct {
+	Type string `json:"type"` // "clip_push"
+	Text string `json:"text"`
+}
+
+// ClipRequest asks for the other device's clipboard ("paste from laptop").
+type ClipRequest struct {
+	Type string `json:"type"` // "clip_request"
+}
+
+// ClipResponse answers ClipRequest. Available is false when the device can't read its
+// clipboard right now (Android only allows the app on screen) or it's marked sensitive.
+type ClipResponse struct {
+	Type      string `json:"type"` // "clip_response"
+	Available bool   `json:"available"`
+	Text      string `json:"text,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// MaxClip is the largest clipboard text shared (256 KB: well inside one frame).
+const MaxClip = 256 << 10

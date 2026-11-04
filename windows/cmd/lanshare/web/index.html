@@ -116,6 +116,10 @@
   .crumbs button:hover { background:var(--brand-soft); }
   .crumbs span { color:var(--faint); }
   .btn.small { padding:6px 10px; font-size:13px; }
+  .cliptext { margin-top:4px; font-size:13px; color:var(--mute); white-space:pre-wrap; word-break:break-word;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .cliprow { display:flex; align-items:center; gap:6px; margin:0 4px 10px; }
+  .cliprow .i { width:16px; height:16px; }
   .row.end { justify-content:flex-end; gap:8px; margin-top:10px; }
   .card.ask { border-color:var(--brand); }
   .newdir { display:flex; gap:8px; padding:8px 12px; }
@@ -194,6 +198,7 @@
     <symbol id="i-chev" viewBox="0 0 24 24"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1s-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 16H5V5h2v3h10V5h2v14z"/></symbol>
     <symbol id="i-qr" viewBox="0 0 24 24"><path d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zm0 10h2v2h-2zm-6-6h2v2h-2zm2 2h2v2h-2zm-2 2h2v2h-2zm2 2h2v2h-2zm2-2h2v2h-2zm0-4h2v2h-2zm2 2h2v2h-2z"/></symbol>
   </defs>
 </svg>
@@ -286,8 +291,21 @@ function render() {
       <div class="row end"><button class="btn ghost" data-act="decline" data-id="${p.id}">Decline</button>
       <button class="btn" data-act="accept" data-id="${p.id}">${icon("check")}Accept</button></div></div>`).join("");
 
+  // Shared clipboard: the last text a phone sent here (it's on the clipboard already).
+  const recent = (c) => c && Date.now() - new Date(c.at).getTime() < 30 * 60_000;
+  let clip = "";
+  if (recent(S.clipIn)) {
+    clip = `<div class="card tr clip"><div class="row"><div class="badge">${icon("clip")}</div>
+      <div class="grow"><div class="t1">Copied from ${esc(S.clipIn.device)} <span class="small">· ${ago(S.clipIn.at)} · paste with Ctrl+V</span></div>
+      <div class="cliptext">${esc(S.clipIn.text)}</div></div>
+      <button class="btn ghost small" data-act="clipcopy" title="Put it on the clipboard again">Copy</button></div></div>`;
+  }
+  if (recent(S.clipOut) && (!recent(S.clipIn) || new Date(S.clipOut.at) > new Date(S.clipIn.at))) {
+    clip += `<div class="muted small cliprow">${icon("clip")} What you copied (${S.clipOut.chars} characters) is ready to paste on ${esc(S.clipOut.device)} · ${ago(S.clipOut.at)}</div>`;
+  }
+
   // Transfers in progress (and just finished), with time taken.
-  $("transfers").innerHTML = asks + S.transfers.map((t) => {
+  $("transfers").innerHTML = asks + clip + S.transfers.map((t) => {
     const pct = t.total ? Math.min(100, (t.sent / t.total) * 100) : (t.state === "done" ? 100 : 0);
     const inbound = t.dir === "in", dirWord = inbound ? "From" : "To";
     const many = t.count > 1;
@@ -426,6 +444,7 @@ function renderModalNow() {
     el.innerHTML = head(esc(d.name)) + `<div class="rows">
       <button class="r" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("send")}</span><span class="grow">Send files</span></button>
       <button class="r" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("down")}</span><span class="grow">Get files from this phone</span></button>
+      <button class="r" data-act="pastefrom" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("clip")}</span><span class="grow"><div>Paste from this phone</div><div class="t2">Gets what's copied there (LAN Share must be open on the phone)</div></span></button>
       <button class="r" data-act="forget" data-id="${d.id}"><span class="ic" style="background:var(--bad-soft);color:var(--bad)">${icon("close")}</span><span class="grow">Forget this phone</span></button></div>`;
   }
 }
@@ -444,6 +463,7 @@ function renderSettings(el) {
     <div class="rows">
       <button class="r" data-act="rename"><span class="ic">${icon("desktop")}</span><span class="grow"><div>Name: <b>${esc(S.me.name)}</b></div><div class="t2">What your phones call this laptop · tap to change</div></span></button>
       <button class="r" data-act="toggleask"><span class="grow"><div>Ask before receiving files</div><div class="t2">${S.me.ask ? "You accept or decline each time" : "Paired phones' files are saved straight away"}</div></span><span class="switch ${S.me.ask ? "on" : ""}"></span></button>
+      <button class="r" data-act="toggleclip"><span class="grow"><div>Share the clipboard with phones</div><div class="t2">${S.me.clip ? "Copy here, paste on your phone (and phones can send you text)" : "Off: nothing copied is shared"}</div></span><span class="switch ${S.me.clip ? "on" : ""}"></span></button>
       <button class="r" data-act="togglebrowse"><span class="grow"><div>Let phones browse and get files</div><div class="t2">${S.me.browse ? "Paired phones can see and get files in the shared folders" : "Phones can only send here"}</div></span><span class="switch ${S.me.browse ? "on" : ""}"></span></button>
       <button class="r" data-act="autostart"><span class="grow"><div>Start LAN Share when I sign in</div><div class="t2">So your phone can always send to this laptop</div></span><span class="switch ${S.me.autostart ? "on" : ""}"></span></button>
       <button class="r" data-act="firewall"><span class="ic">${icon("shield")}</span><span class="grow"><div>Allow through Windows Firewall</div><div class="t2">Fixes "phone can't connect to laptop". Windows asks once.</div></span></button>
@@ -601,6 +621,14 @@ document.addEventListener("click", async (ev) => {
         try { await api("/api/settings", {name: $("newname").value}); closeModal(); }
         catch (e) { $("rerr").textContent = e.message; }
         return;
+      }
+      case "toggleclip": return api("/api/settings", {clip: !S.me.clip});
+      case "clipcopy": await api("/api/clip/again", {}); return toast("Copied. Paste with Ctrl+V.");
+      case "pastefrom": {
+        const d = S.devices.find((x) => x.id === t.dataset.id);
+        closeModal();
+        const r = await api("/api/remote/clip", {device: t.dataset.id});
+        return toast(`Copied ${r.chars} characters from ${d ? d.name : "the phone"}. Paste with Ctrl+V.`);
       }
       case "toggleask": return api("/api/settings", {ask: !S.me.ask});
       case "togglebrowse": return api("/api/settings", {browse: !S.me.browse});

@@ -116,7 +116,8 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
-        Bubble.update() // back from granting "Display over other apps"
+        Bubble.update(this) // back from granting "Display over other apps"
+        main.postDelayed({ Bubble.update(this); foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }, 800) // some phones report the permission late
         if (!hooksRan) {
             hooksRan = true
             ui { runTestHooks() } // after the screen is fully up
@@ -127,14 +128,12 @@ class MainActivity : Activity() {
         super.onStart()
         Hub.listen(onHub)
         presence.start()
-        Bubble.hiddenForApp = true
-        Bubble.update()
+        Clip.screenShown()
         render()
     }
 
     override fun onStop() {
-        Bubble.hiddenForApp = false
-        Bubble.update()
+        Clip.screenHidden()
         presence.stop()
         Hub.unlisten(onHub)
         super.onStop()
@@ -631,22 +630,38 @@ class MainActivity : Activity() {
             trail = if (browse) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
             Prefs.setAllowBrowse(this, !browse); fillSharedFolders(sheet)
         })
+        // Shared clipboard.
+        val clip = Clip.enabled(this)
+        sheet.add(Sheet.Row(R.drawable.ic_document, "Share the clipboard with laptops",
+            sub = if (clip) "Copy on a laptop, paste here; send what you copy here in one tap" else "Off: nothing copied is shared",
+            trail = if (clip) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+            Clip.setEnabled(this, !clip); fillSharedFolders(sheet)
+        })
         // The floating bubble opens the assistant from any app.
-        val bubbleOn = Bubble.enabled(this) && android.provider.Settings.canDrawOverlays(this)
-        sheet.add(Sheet.Row(R.drawable.ic_mic, "Floating assistant bubble",
-            sub = if (bubbleOn) "Tap it in any app to send or get files by voice" else "A small button over other apps, for the voice assistant",
-            trail = if (bubbleOn) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
-            if (bubbleOn) {
-                Bubble.setEnabled(this, false)
-            } else {
-                Bubble.setEnabled(this, true)
-                if (!android.provider.Settings.canDrawOverlays(this)) {
-                    showCard(Kind.WORKING, "Allow “Display over other apps”", "Turn it on for LAN Share, then come back.")
+        val bubbleWanted = Bubble.enabled(this)
+        val bubbleBlocked = bubbleWanted && (!android.provider.Settings.canDrawOverlays(this) || Bubble.problem == Bubble.BLOCKED)
+        sheet.add(Sheet.Row(R.drawable.ic_mic, "Floating assistant bubble", sub = Bubble.status(this),
+            chip = if (bubbleBlocked) "Fix" else null,
+            trail = if (bubbleWanted) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+            when {
+                bubbleWanted && !android.provider.Settings.canDrawOverlays(this) ->
                     runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+                bubbleWanted && Bubble.problem == Bubble.BLOCKED -> {
+                    // The phone maker's own permission lives in the app's info page.
+                    Bubble.problem = null
+                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
                 }
-                ReceiveService.start(this)
+                bubbleWanted -> Bubble.setEnabled(this, false)
+                else -> {
+                    Bubble.setEnabled(this, true)
+                    if (!android.provider.Settings.canDrawOverlays(this)) {
+                        showCard(Kind.WORKING, "Allow “Display over other apps”", "Turn it on for LAN Share, then come back.")
+                        runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+                    }
+                    ReceiveService.start(this)
+                }
             }
-            fillSharedFolders(sheet)
+            main.postDelayed({ if (sheet.isShowing) fillSharedFolders(sheet) }, 900) // shows whether it really appeared
         })
         // "Hey Jarvis" opens the assistant without touching the phone.
         val wake = WakeWord.canListen(this)
@@ -687,9 +702,37 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ sending
 
+    /** Text onto a laptop's clipboard. */
+    private fun sendText(d: Device, text: String) {
+        showCard(Kind.WORKING, "Copying to ${d.name}…", Clip.oneLine(text))
+        Actions.sendClip(this, d, text, { friendly(it, d) }) { err ->
+            ui {
+                if (err == null) showCard(Kind.DONE, "Copied to ${d.name}", "Paste it there with Ctrl+V.")
+                else showCard(Kind.ERROR, "Couldn't copy to ${d.name}", err, device = d.id)
+            }
+        }
+    }
+
+    /** This phone's clipboard → a laptop's (reads it now: this screen is on top). */
+    private fun sendClipboard(d: Device) {
+        val (text, why) = Clip.read(this)
+        if (text == null) showCard(Kind.ERROR, "Nothing to send", why ?: "") else sendText(d, text)
+    }
+
+    private fun pasteFrom(d: Device) {
+        showCard(Kind.WORKING, "Getting ${d.name}'s clipboard…", "")
+        Actions.pasteFrom(this, d, { friendly(it, d) }) { err ->
+            ui {
+                if (err == null) showCard(Kind.DONE, "Copied from ${d.name}", "Paste it anywhere on this phone.")
+                else showCard(Kind.ERROR, "Couldn't get ${d.name}'s clipboard", err, device = d.id)
+            }
+        }
+    }
+
     /** Files, or a whole folder? */
     private fun sendWhat(d: Device) {
         val sheet = Sheet(this, "Send to ${d.name}", null)
+        if (Clip.enabled(this)) sheet.add(Sheet.Row(R.drawable.ic_document, "Send what's copied", sub = "Onto its clipboard, ready to paste") { sendClipboard(d) })
         sheet.add(Sheet.Row(R.drawable.ic_file, "Choose files", sub = "One or more") { pickFiles(d) })
         sheet.add(Sheet.Row(R.drawable.ic_folder, "Send a whole folder", sub = "With its subfolders") {
             pickTarget = d
@@ -758,8 +801,22 @@ class MainActivity : Activity() {
         setIntent(Intent()) // don't resend after rotation
         Hub.shared(uris) // "this file" for the assistant, for a few minutes
         val devices = DeviceStore.all(this)
+        // Shared text (a link, a message): onto a laptop's clipboard, ready to paste.
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()
+        if (uris.isEmpty() && !text.isNullOrEmpty()) {
+            when {
+                devices.isEmpty() -> showCard(Kind.ERROR, "Pair a laptop first", "Then share the text again.")
+                devices.size == 1 -> sendText(devices[0], text)
+                else -> {
+                    val sheet = Sheet(this, "Copy to…", Clip.oneLine(text))
+                    devices.forEach { d -> sheet.add(Sheet.Row(if (d.isPhone) R.drawable.ic_phone else R.drawable.ic_laptop, d.name) { sendText(d, text) }) }
+                    sheet.show()
+                }
+            }
+            return
+        }
         when {
-            uris.isEmpty() -> showCard(Kind.ERROR, "Nothing to send", "That app shared text, not a file.")
+            uris.isEmpty() -> showCard(Kind.ERROR, "Nothing to send", "That app shared nothing LAN Share can send.")
             devices.isEmpty() -> showCard(Kind.ERROR, "Pair a laptop first", "Then share the file again.")
             devices.size == 1 -> chooseFolder(devices[0], uris)
             else -> {
@@ -885,6 +942,7 @@ class MainActivity : Activity() {
     /** Browse a laptop's shared folders, tick files, and copy them to this phone's Downloads. */
     private fun getFiles(d: Device) {
         val sheet = Sheet(this, "Get from ${d.name}", "Copies to this phone's Downloads")
+        if (Clip.enabled(this)) sheet.add(Sheet.Row(R.drawable.ic_document, "Paste from ${d.name}", sub = "What's copied there, onto this phone's clipboard") { pasteFrom(d) })
         sheet.message("Asking ${d.name} for its folders…")
         sheet.show()
         worker.execute {
@@ -901,6 +959,7 @@ class MainActivity : Activity() {
         sheet.clear()
         sheet.crumb(null, null)
         sheet.primary(null)
+        if (Clip.enabled(this)) sheet.add(Sheet.Row(R.drawable.ic_document, "Paste from ${d.name}", sub = "What's copied there, onto this phone's clipboard") { pasteFrom(d) })
         if (roots.isEmpty()) sheet.message("${d.name} isn't sharing any folders. Add one in LAN Share → Settings on the laptop.")
         roots.forEach { f ->
             sheet.add(Sheet.Row(folderIcon(f.key), f.label, trail = Sheet.Trail.CHEVRON, dismiss = false) {
@@ -1041,6 +1100,12 @@ class MainActivity : Activity() {
                         Log.i(TAG, "wake test: ${f.name} score ${"%.3f".format(score)}")
                     }
                 }
+                "send_clip" -> { // copies a text here, then sends what's copied (the real read path)
+                    getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("test", "Hello from the phone 📱"))
+                    main.postDelayed({ sendClipboard(d) }, 1500)
+                }
+                "paste_from" -> pasteFrom(d)
                 "ask_on" -> Approvals.setEnabled(this, true)
                 "ask_off" -> Approvals.setEnabled(this, false)
                 "browse_off" -> Prefs.setAllowBrowse(this, false)

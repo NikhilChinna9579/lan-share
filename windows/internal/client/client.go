@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NikhilChinna9579/lan-share/windows/internal/files"
@@ -105,6 +106,9 @@ func (c *Conn) expect(v any, types ...string) error {
 	if typ == "error" {
 		var e protocol.Error
 		json.Unmarshal(raw, &e)
+		if e.Code == "not_allowed" && strings.Contains(e.Message, "clipboard") {
+			return fmt.Errorf("%s has clipboard sharing turned off (LAN Share's settings there)", c.PeerName)
+		}
 		if e.Code == "not_allowed" {
 			return fmt.Errorf("%s doesn't allow browsing its files. Turn it on in LAN Share's settings there", c.PeerName)
 		}
@@ -331,4 +335,27 @@ func (c *Conn) Search(query string) ([]protocol.SearchHit, error) {
 	var resp protocol.SearchResponse
 	err := c.expect(&resp, "search_response")
 	return resp.Results, err
+}
+
+// PushClip puts text on the device's clipboard.
+func (c *Conn) PushClip(text string) error {
+	if err := c.send(protocol.ClipPush{Type: "clip_push", Text: text}); err != nil {
+		return err
+	}
+	return c.expect(nil, "clip_ok")
+}
+
+// RequestClip gets the device's clipboard text ("paste from …").
+func (c *Conn) RequestClip() (string, error) {
+	if err := c.send(protocol.ClipRequest{Type: "clip_request"}); err != nil {
+		return "", err
+	}
+	var r protocol.ClipResponse
+	if err := c.expect(&r, "clip_response"); err != nil {
+		return "", err
+	}
+	if !r.Available {
+		return "", fmt.Errorf("%s: %s", c.PeerName, r.Reason)
+	}
+	return r.Text, nil
 }

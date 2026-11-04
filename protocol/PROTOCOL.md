@@ -145,6 +145,21 @@ Searches every shared folder and its subfolders (hidden items skipped), for at m
 about 2 seconds. Refused with `not_allowed` when browsing is off. A hit can be fetched
 with `fetch_request` using its `folder` and `path`.
 
+### Shared clipboard
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `clip_push` | either | `text` (≤ 256 KB): put it on the receiver's clipboard |
+| `clip_ok` | reply | — (or `error` `not_allowed` when clipboard sharing is off) |
+| `clip_request` | either | — ("paste from that device") |
+| `clip_response` | reply | `available` (bool), `text`, or `reason` (sharing off, nothing copied, marked private, or, on Android, LAN Share not on screen) |
+
+Laptops push what the person copies to their online phones as it's copied. Android
+apps can only read the clipboard while on screen, so phones push only when the person
+asks (assistant, Send sheet, Share → LAN Share with text). Copies that password
+managers mark as private (Windows `ExcludeClipboardContentFromMonitorProcessing` /
+`CanIncludeInClipboardHistory`=0, Android `EXTRA_IS_SENSITIVE`) are never sent.
+
 ### New folder
 
 | Type | Direction | Fields |

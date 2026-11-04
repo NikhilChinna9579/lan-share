@@ -20,6 +20,7 @@ import (
 	"github.com/skip2/go-qrcode"
 
 	"github.com/NikhilChinna9579/lan-share/windows/internal/client"
+	"github.com/NikhilChinna9579/lan-share/windows/internal/clipboard"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/files"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/identity"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/mdns"
@@ -58,6 +59,9 @@ type app struct {
 	quitOnce  sync.Once
 	settings  settings
 	approvals []*approval
+	clipIn    *clipNote // last text a phone put on this laptop's clipboard
+	clipFull  string    // …all of it (for the window's Copy button)
+	clipOut   *clipNote // last text copied here and sent to phones
 }
 
 // settings are this laptop's choices, kept in settings.json.
@@ -65,6 +69,15 @@ type settings struct {
 	Name     string `json:"name,omitempty"`     // shown to phones; default: the computer's name
 	Ask      bool   `json:"askBeforeReceive"`   // ask before accepting files
 	NoBrowse bool   `json:"noBrowse,omitempty"` // phones may not list or get files from here
+	NoClip   bool   `json:"noClip,omitempty"`   // don't share the clipboard with phones
+}
+
+// clipNote is the last clipboard text that came from, or went to, a phone.
+type clipNote struct {
+	Device string    `json:"device"`
+	Text   string    `json:"text"` // first 300 characters
+	Chars  int       `json:"chars"`
+	At     time.Time `json:"at"`
 }
 
 // approval is an incoming transfer waiting for Accept or Decline.
@@ -175,7 +188,8 @@ func newApp(dataDir, logPath string) (*app, error) {
 func (a *app) start() error {
 	a.srv = &server.Server{Name: a.name, Identity: a.id, Trust: a.trust, Folders: a.folders, OnEvent: a.onServerEvent,
 		AllowBrowse: func() bool { a.mu.Lock(); defer a.mu.Unlock(); return !a.settings.NoBrowse },
-		Approve:     a.approve, PartialDir: filepath.Join(a.dataDir, "partial")}
+		Approve:     a.approve, PartialDir: filepath.Join(a.dataDir, "partial"),
+		OnClip: a.clipFromPhone, ClipText: a.clipForPhone}
 	go xfer.CleanPartials(a.srv.PartialDir)
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *flagPort))
 	if err != nil {
@@ -223,6 +237,7 @@ func (a *app) start() error {
 		}
 	}()
 
+	go clipboard.Watch(a.quit, a.clipCopied)
 	a.tracker.OnChange = a.onPresence
 	go a.tracker.Run(a.stopTracker)
 	go installSendTo(a.dataDir)
@@ -293,6 +308,102 @@ func (a *app) saveSettings() error {
 	data, _ := json.MarshalIndent(a.settings, "", "  ")
 	a.mu.Unlock()
 	return os.WriteFile(filepath.Join(a.dataDir, "settings.json"), data, 0o600)
+}
+
+// ---------------------------------------------------------------- shared clipboard
+
+func preview(text string) (string, int) {
+	r := []rune(text)
+	if len(r) > 300 {
+		return string(r[:300]) + "…", len(r)
+	}
+	return text, len(r)
+}
+
+func (a *app) clipOn() bool { a.mu.Lock(); defer a.mu.Unlock(); return !a.settings.NoClip }
+
+// clipFromPhone: a phone sent text (its clipboard, or shared text): ready for Ctrl+V here.
+func (a *app) clipFromPhone(peerID, from, text string) bool {
+	if !a.clipOn() {
+		return false
+	}
+	if err := clipboard.Write(text); err != nil {
+		log.Printf("clipboard: %v", err)
+		return false
+	}
+	p, n := preview(text)
+	a.mu.Lock()
+	a.clipIn = &clipNote{Device: from, Text: p, Chars: n, At: time.Now()}
+	a.clipFull = text
+	a.mu.Unlock()
+	log.Printf("clipboard: %d characters from %s", n, from)
+	short, _ := preview(strings.Join(strings.Fields(text), " "))
+	if len([]rune(short)) > 80 {
+		short = string([]rune(short)[:80]) + "…"
+	}
+	go notify("Copied from "+from, short+" · paste with Ctrl+V")
+	a.hub.changed()
+	return true
+}
+
+// clipForPhone answers "paste from laptop".
+func (a *app) clipForPhone() (string, bool, string) {
+	if !a.clipOn() {
+		return "", false, "clipboard sharing is turned off on " + a.name
+	}
+	text, private, err := clipboard.Read()
+	switch {
+	case err != nil:
+		return "", false, err.Error()
+	case private:
+		return "", false, "what's copied on " + a.name + " is private (a password manager marked it)"
+	case text == "":
+		return "", false, "nothing (or no text) is copied on " + a.name
+	case len(text) > protocol.MaxClip:
+		return "", false, "what's copied on " + a.name + " is too long to share"
+	}
+	return text, true, ""
+}
+
+// clipCopied: something was just copied on this laptop: send it to the phones online.
+func (a *app) clipCopied(text string) {
+	if !a.clipOn() || len(text) > protocol.MaxClip {
+		return
+	}
+	var to []string
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for _, s := range a.tracker.Snapshot() {
+		if s.Status != presence.Online {
+			continue
+		}
+		wg.Add(1)
+		go func(id, name string) {
+			defer wg.Done()
+			c, _, err := a.dial(id)
+			if err != nil {
+				return
+			}
+			defer c.Close()
+			if err := c.PushClip(text); err != nil {
+				log.Printf("clipboard: to %s: %v", name, err)
+				return
+			}
+			mu.Lock()
+			to = append(to, name)
+			mu.Unlock()
+		}(s.ID, s.Name)
+	}
+	wg.Wait()
+	if len(to) == 0 {
+		return
+	}
+	p, n := preview(text)
+	log.Printf("clipboard: sent %d characters to %s", n, strings.Join(to, ", "))
+	a.mu.Lock()
+	a.clipOut = &clipNote{Device: strings.Join(to, ", "), Text: p, Chars: n, At: time.Now()}
+	a.mu.Unlock()
+	a.hub.changed()
 }
 
 // approve is asked by the server before accepting files. With "Ask before receiving"
@@ -864,7 +975,10 @@ func (a *app) stateJSON() []byte {
 			"logPath": a.logPath, "autostart": autostartEnabled(), "platform": platformName(),
 			"installed": isInstalled(), "canInstall": installSupported() && !isInstalled(),
 			"ask": a.settings.Ask, "browse": !a.settings.NoBrowse, "keyProtected": identity.Protected(),
+			"clip": !a.settings.NoClip,
 		},
+		"clipIn":    a.clipIn,
+		"clipOut":   a.clipOut,
 		"approvals": orEmpty(a.approvals),
 		"devices":   orEmpty(devs),
 		"folders":   orEmpty(fl),

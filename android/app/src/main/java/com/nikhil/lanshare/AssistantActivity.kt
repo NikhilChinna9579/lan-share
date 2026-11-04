@@ -122,8 +122,9 @@ class AssistantActivity : Activity() {
     override fun onStart() {
         super.onStart()
         Bubble.hiddenForAssistant = true
-        Bubble.update()
+        Bubble.update(this)
         open = true
+        Clip.screenShown()
         ReceiveService.refresh(this) // "Hey Jarvis" listening pauses while we're open
         Hub.listen(onHub)
         presence.start()
@@ -131,8 +132,9 @@ class AssistantActivity : Activity() {
 
     override fun onStop() {
         Bubble.hiddenForAssistant = false
-        Bubble.update()
+        Bubble.update(this)
         open = false
+        Clip.screenHidden()
         ReceiveService.refresh(this) // and resumes
         Hub.unlisten(onHub)
         presence.stop()
@@ -167,6 +169,10 @@ class AssistantActivity : Activity() {
             Option("Send the last screenshot", R.drawable.ic_image, sub = "to $name") { handle("send the last screenshot to $name") },
             Option("Send a file…", R.drawable.ic_send) { pickFiles { handleItems(it) } },
         )
+        if (Clip.enabled(this)) {
+            items.add(2, Option("Send what's copied", R.drawable.ic_document, sub = "to $name, ready to paste") { handle("send my clipboard to $name") })
+            items.add(3, Option("Paste from $name", R.drawable.ic_document, sub = "its clipboard onto this phone") { handle("paste from $name") })
+        }
         Hub.recent().take(2).forEach { items += Option(it.text, R.drawable.ic_check_circle, sub = it.detail.ifEmpty { null }, run = null) }
         show(items, asking = false)
     }
@@ -259,6 +265,7 @@ class AssistantActivity : Activity() {
             is Commands.Command.Send -> planSend(c)
             is Commands.Command.Get -> planGet(c)
             is Commands.Command.Status -> status(c.device)
+            is Commands.Command.Paste -> paste(c.device)
             Commands.Command.Unknown -> {
                 say("Sorry, I didn't get that", "Try “send the last photo to my laptop” or “get report.pdf from my laptop”.")
                 if (asking) show(options, asking = true)
@@ -287,7 +294,52 @@ class AssistantActivity : Activity() {
 
     // ------------------------------------------------------------------ sending
 
+    // ------------------------------------------------------------------ shared clipboard
+
+    private fun sendClipboard(c: Commands.Command.Send, chosen: Device? = null) {
+        val devices = DeviceStore.all(this)
+        val d = chosen ?: c.device?.let { n -> devices.firstOrNull { it.name == n } } ?: devices.singleOrNull()
+        if (d == null) {
+            ask("Send what's copied to which laptop?", "", devices.map { dev -> Option(dev.name, R.drawable.ic_laptop) { sendClipboard(c, dev) } })
+            return
+        }
+        val (text, why) = Clip.read(this) // we're on screen, so Android lets us read it
+        if (text == null) { say("Nothing to send", why ?: ""); show(emptyList(), false); return }
+        Log.i(TAG, "assistant: plan send clipboard (${text.length} chars) to ${d.name}")
+        say("Copying to ${d.name}…", Clip.oneLine(text))
+        show(emptyList(), false)
+        Actions.sendClip(this, d, text, { explain(it, d) }) { err ->
+            ui {
+                if (err == null) {
+                    say("Copied to ${d.name} ✓", "Paste it there with Ctrl+V.")
+                    main.postDelayed({ if (!isFinishing) finish() }, 2500)
+                } else say("Couldn't send it", err)
+            }
+        }
+    }
+
+    private fun paste(name: String?, chosen: Device? = null) {
+        val devices = DeviceStore.all(this)
+        val d = chosen ?: name?.let { n -> devices.firstOrNull { it.name == n } } ?: devices.singleOrNull()
+        if (d == null) {
+            ask("Paste from which laptop?", "", devices.map { dev -> Option(dev.name, R.drawable.ic_laptop) { paste(null, dev) } })
+            return
+        }
+        Log.i(TAG, "assistant: plan paste from ${d.name}")
+        say("Getting ${d.name}'s clipboard…")
+        show(emptyList(), false)
+        Actions.pasteFrom(this, d, { explain(it, d) }) { err ->
+            ui {
+                if (err == null) {
+                    say("Copied from ${d.name} ✓", "Paste it anywhere on this phone.")
+                    main.postDelayed({ if (!isFinishing) finish() }, 2500)
+                } else say("Couldn't get it", err)
+            }
+        }
+    }
+
     private fun planSend(c: Commands.Command.Send) {
+        if (c.what == Commands.What.CLIPBOARD) return sendClipboard(c)
         say("Finding the file…")
         show(emptyList(), asking = false)
         worker.execute {

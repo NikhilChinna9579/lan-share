@@ -12,6 +12,8 @@ from a floating bubble, with no cloud, no login and no messaging app in between.
 - **Send both ways**: files or whole folders (subfolders kept), into any shared folder or
   subfolder, or a new folder made on the spot. Live progress, time taken, speed, Cancel, Retry.
   Big transfers that get cut off **resume** where they stopped.
+- **Shared clipboard**: copy on the laptop, paste on the phone; send what you copied on the
+  phone (or any shared text) to the laptop in one tap; "paste from laptop/phone" on demand.
 - **Get files from the other device**: browse its shared folders, or **search** them all by name.
 - **Voice assistant** in a **floating bubble**: "send this to my laptop in Documents",
   "send the last photo to my laptop", "get budget from my laptop". Asks follow-up questions,

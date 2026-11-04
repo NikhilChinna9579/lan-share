@@ -78,6 +78,11 @@ type Server struct {
 	// PartialDir, if set, keeps big unfinished files (in the app's own folder) so the
 	// sender's retry continues where it stopped.
 	PartialDir string
+	// OnClip, if set, receives text a paired device put on our clipboard (clip_push);
+	// it returns false if clipboard sharing is off. ClipText answers "paste from"
+	// (clip_request): the text, or ok=false with a reason.
+	OnClip   func(peerID, from, text string) bool
+	ClipText func() (text string, ok bool, reason string)
 	// AllowBrowse, if set and returning false, refuses listing and fetching files
 	// (a paired device can still send here).
 	AllowBrowse func() bool
@@ -255,6 +260,20 @@ func (s *Server) handle(c *tls.Conn) {
 			resp := protocol.SearchResponse{Type: "search_response", Results: []protocol.SearchHit{}}
 			for _, h := range s.Folders.Search(req.Query, 200) {
 				resp.Results = append(resp.Results, protocol.SearchHit{Folder: h.Folder, Path: h.Path, Name: h.Name, Size: h.Size, Modified: h.Modified.UnixMilli()})
+			}
+			err = protocol.WriteFrame(conn, resp)
+		case "clip_push":
+			var req protocol.ClipPush
+			json.Unmarshal(raw, &req)
+			if s.OnClip == nil || len(req.Text) > protocol.MaxClip || !s.OnClip(peerID, peer.Name, req.Text) {
+				err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "not_allowed", Message: "clipboard sharing is off on " + s.Name})
+				break
+			}
+			err = protocol.WriteFrame(conn, protocol.Message{Type: "clip_ok"})
+		case "clip_request":
+			resp := protocol.ClipResponse{Type: "clip_response", Reason: "clipboard sharing is off on " + s.Name}
+			if s.ClipText != nil {
+				resp.Text, resp.Available, resp.Reason = s.ClipText()
 			}
 			err = protocol.WriteFrame(conn, resp)
 		case "mkdir_request":

@@ -33,18 +33,20 @@ class Bubble(private val ctx: Context) {
     ).apply {
         gravity = Gravity.TOP or Gravity.START
         x = prefs.getInt("x", -1)
-        y = prefs.getInt("y", dp(240))
+        y = prefs.getInt("y", -1) // first time: bottom right, out of the way (set in show)
     }
 
     /** Shows or hides the bubble to match the setting and permission. */
     fun refresh() {
-        if (enabled(ctx) && Settings.canDrawOverlays(ctx) && !hiddenForAssistant && !hiddenForApp) show() else hide()
+        if (enabled(ctx) && Settings.canDrawOverlays(ctx) && !hiddenForAssistant) show() else hide()
     }
 
     private fun show() {
         if (view != null) return
         val screenW = ctx.resources.displayMetrics.widthPixels
+        val screenH = ctx.resources.displayMetrics.heightPixels
         if (params.x < 0) params.x = screenW - size - dp(8)
+        if (params.y < 0) params.y = screenH - size - dp(150)
         val v = ImageView(ctx).apply {
             setImageResource(R.drawable.ic_mic)
             imageTintList = android.content.res.ColorStateList.valueOf(ctx.getColor(R.color.on_primary))
@@ -58,13 +60,25 @@ class Bubble(private val ctx: Context) {
         runCatching { wm.addView(v, params) }
             .onSuccess {
                 view = v
+                problem = null
                 Log.i("LanShare", "bubble shown")
-                v.post { // where it is (tests tap it there)
-                    val xy = IntArray(2).also { v.getLocationOnScreen(it) }
-                    Log.d("LanShare", "ui: bubble at ${xy[0] + v.width / 2},${xy[1] + v.height / 2}")
-                }
+                // Some phones (Xiaomi, Oppo, Vivo…) accept the window but never draw it
+                // unless a second, phone-specific permission is on: check it really appeared.
+                v.postDelayed({
+                    if (view !== v) return@postDelayed
+                    if (!v.isAttachedToWindow || !v.isShown || v.windowVisibility != View.VISIBLE) {
+                        problem = BLOCKED
+                        Log.w("LanShare", "bubble: added but not visible")
+                    } else {
+                        val xy = IntArray(2).also { v.getLocationOnScreen(it) }
+                        Log.d("LanShare", "ui: bubble at ${xy[0] + v.width / 2},${xy[1] + v.height / 2}")
+                    }
+                }, 600)
             }
-            .onFailure { Log.w("LanShare", "bubble: $it") }
+            .onFailure {
+                problem = BLOCKED
+                Log.w("LanShare", "bubble: $it")
+            }
     }
 
     fun hide() {
@@ -136,20 +150,38 @@ class Bubble(private val ctx: Context) {
         /** True while the assistant is open: the bubble steps aside. */
         @Volatile var hiddenForAssistant = false
 
-        /** True while LAN Share's own screen is open (it has its own mic button). */
-        @Volatile var hiddenForApp = false
 
         fun enabled(ctx: Context) = ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE).getBoolean("on", false)
 
         fun setEnabled(ctx: Context, on: Boolean) {
             ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE).edit().putBoolean("on", on).apply()
-            update()
+            update(ctx)
         }
 
-        /** Re-checks the bubble from any thread. */
-        fun update() {
-            val b = current ?: return
+        /** Why the bubble isn't showing although it's on, if we know. */
+        @Volatile var problem: String? = null
+        const val BLOCKED = "blocked"
+
+        /**
+         * Re-checks the bubble from any thread. The bubble lives in the receiving service:
+         * if Android stopped it (or it never started), [ctx] lets us start it again.
+         */
+        fun update(ctx: Context? = null) {
+            val b = current
+            if (b == null) {
+                if (ctx != null && enabled(ctx)) ReceiveService.start(ctx)
+                return
+            }
             android.os.Handler(android.os.Looper.getMainLooper()).post { b.refresh() }
+        }
+
+        /** One line for Settings: what the bubble is doing, or what's stopping it. */
+        fun status(ctx: Context): String = when {
+            !enabled(ctx) -> "A small button over other apps, for the voice assistant"
+            !Settings.canDrawOverlays(ctx) -> "Needs “Display over other apps”: tap to allow"
+            problem == BLOCKED -> "Your phone is blocking it: tap, then allow “Display pop-up windows while running in background” (or “Floating windows”)"
+            current?.view != null -> "On: drag it anywhere; tap it in any app"
+            else -> "Starting…"
         }
     }
 }

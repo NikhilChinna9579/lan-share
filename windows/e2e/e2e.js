@@ -91,7 +91,9 @@ async function step(name, fn) {
     page.setDefaultTimeout(10_000);
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
-    page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+    // Expected API refusals (shown to the person as messages, e.g. "isn't open on the phone")
+    // appear as failed requests; real script errors still count.
+    page.on("console", (m) => { if (m.type() === "error" && !/status of 400/.test(m.text())) errors.push(m.text()); });
 
     await step("window opens and shows the empty state", async () => {
       await page.goto(url);
@@ -257,6 +259,47 @@ async function step(name, fn) {
       start("phone-fetch", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47823", "-fetch", "downloads:" + name]);
       await page.getByText(`Nikhil's phone got ${name}`).first().waitFor({ timeout: 15_000 });
       await waitFor("file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 2_000_000);
+    });
+
+    await step("shared clipboard: copy on the laptop, it's on the phone", async () => {
+      const phoneLog = () => fs.readFileSync(path.join(out, "phone-slow.log"), "utf8");
+      await page.evaluate(() => api("/api/clip/copy", {text: "Meeting at 5pm ✓"}));
+      await waitFor("phone got the clipboard", () => phoneLog().includes('clipboard from DESKTOP-NIKHIL: "Meeting at 5pm ✓"'), 10_000);
+      await page.getByText(/is ready to paste on Nikhil's phone/).waitFor();
+      // Turned off: nothing is shared.
+      await page.evaluate(() => api("/api/settings", {clip: false}));
+      await page.evaluate(() => api("/api/clip/copy", {text: "private note"}));
+      await sleep(2000);
+      if (phoneLog().includes("private note")) throw new Error("clipboard shared while turned off");
+      await page.evaluate(() => api("/api/settings", {clip: true}));
+    });
+
+    await step("shared clipboard: the phone sends text, ready for Ctrl+V here", async () => {
+      start("phone-clip-push", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47861", "-clip-push", "https://example.com/from-phone"]);
+      await waitFor("on the laptop's clipboard", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "https://example.com/from-phone", 10_000);
+      await page.locator(".card.clip", { hasText: "Copied from Nikhil's phone" }).getByText("https://example.com/from-phone").waitFor();
+      await settle(); await page.screenshot({ path: path.join(out, "w08i-clipboard.png") });
+      // Copied something else since: the card's Copy button puts the phone's text back.
+      await page.evaluate(() => api("/api/clip/set", {text: "something else"}));
+      await page.locator('[data-act="clipcopy"]').click();
+      await waitFor("restored", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "https://example.com/from-phone");
+    });
+
+    await step('shared clipboard: "Paste from this phone"', async () => {
+      // LAN Share isn't on screen on the phone: a clear message.
+      await page.locator('.dev [data-act="devmenu"]').first().click();
+      await page.locator('[data-act="pastefrom"]').click();
+      await page.getByText(/isn't open on the phone/).waitFor();
+      // It is: its clipboard comes over.
+      procs[1].kill("SIGKILL");
+      await sleep(300);
+      procs[1] = start("phone-clip", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47821", "-clip-text", "Copied on the phone 📱"]);
+      await sleep(1500);
+      await page.locator('.dev [data-act="devmenu"]').first().click();
+      await page.locator('[data-act="pastefrom"]').click();
+      await page.getByText(/Copied \d+ characters from Nikhil's phone/).waitFor();
+      const r = await page.evaluate(() => api("/api/clip", {}));
+      if (r.text !== "Copied on the phone 📱") throw new Error("laptop clipboard: " + r.text);
     });
 
     await step('"Send to" a whole folder, into a new folder made on the phone', async () => {

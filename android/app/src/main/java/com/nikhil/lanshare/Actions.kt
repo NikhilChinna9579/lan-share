@@ -96,6 +96,34 @@ object Actions {
         }
     }
 
+    // ------------------------------------------------------------- shared clipboard
+
+    /** Sends text to the laptop's clipboard. [done] gets null on success, or what went wrong. */
+    fun sendClip(ctx: Context, d: Device, text: String, explain: (Throwable) -> String, done: (String?) -> Unit = {}) {
+        val app = ctx.applicationContext
+        worker.execute {
+            val r = runCatching { Client.pushClip(DeviceStore.get(app, d.id) ?: d, deviceName(app), text) }
+            Log.i(TAG, "clipboard sent to ${d.name}: " + r.map { "${text.length} chars" }.getOrElse { "failed: $it" })
+            r.onSuccess { Hub.add("sent", "Copied to ${d.name}'s clipboard", Clip.oneLine(text)) }
+                .onFailure { Hub.add("error", "Couldn't send the clipboard to ${d.name}", explain(it)) }
+            done(r.exceptionOrNull()?.let(explain))
+        }
+    }
+
+    /** Copies the laptop's clipboard onto this phone's. [done] gets null on success, or why not. */
+    fun pasteFrom(ctx: Context, d: Device, explain: (Throwable) -> String, done: (String?) -> Unit = {}) {
+        val app = ctx.applicationContext
+        worker.execute {
+            val r = runCatching { Client.requestClip(DeviceStore.get(app, d.id) ?: d, deviceName(app)) }
+            r.onSuccess { text ->
+                Clip.write(app, text, d.name, notify = false)
+                Log.i(TAG, "clipboard pasted from ${d.name}: ${text.length} chars")
+                Hub.add("received", "Copied from ${d.name}'s clipboard", Clip.oneLine(text))
+            }.onFailure { Log.i(TAG, "paste from ${d.name} failed: $it") }
+            done(r.exceptionOrNull()?.let { if (it is IllegalStateException) it.message else explain(it) })
+        }
+    }
+
     // ------------------------------------------------------------- finding "this file"
 
     /** The newest photo, screenshot, video or download on this phone; null if none (or no permission). */

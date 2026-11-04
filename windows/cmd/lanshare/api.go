@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NikhilChinna9579/lan-share/windows/internal/clipboard"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/files"
 )
 
@@ -288,6 +289,7 @@ func serveAPI(a *app, ln net.Listener) {
 			Name   *string
 			Ask    *bool
 			Browse *bool
+			Clip   *bool
 		}
 		if err := readJSON(r, &in); err != nil {
 			return nil, err
@@ -304,9 +306,62 @@ func serveAPI(a *app, ln net.Listener) {
 		if in.Browse != nil {
 			a.settings.NoBrowse = !*in.Browse
 		}
+		if in.Clip != nil {
+			a.settings.NoClip = !*in.Clip
+		}
 		a.mu.Unlock()
 		a.hub.changed()
 		return nil, a.saveSettings()
+	})
+	h("/api/clip", func(*http.Request) (any, error) { // what's on this laptop's clipboard
+		text, private, err := clipboard.Read()
+		return map[string]any{"text": text, "private": private}, err
+	})
+	h("/api/clip/set", func(r *http.Request) (any, error) { // the window's Copy button
+		var in struct{ Text string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		return nil, clipboard.Write(in.Text)
+	})
+	h("/api/clip/again", func(*http.Request) (any, error) { // the clipboard card's Copy button
+		a.mu.Lock()
+		text := a.clipFull
+		a.mu.Unlock()
+		return nil, clipboard.Write(text)
+	})
+	h("/api/clip/copy", func(r *http.Request) (any, error) { // testing: as if the person copied this
+		var in struct{ Text string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		clipboard.Copy(in.Text)
+		return nil, nil
+	})
+	h("/api/remote/clip", func(r *http.Request) (any, error) { // "Paste from this phone"
+		var in struct{ Device string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		c, d, err := a.dial(in.Device)
+		if err != nil {
+			return nil, err
+		}
+		defer c.Close()
+		text, err := c.RequestClip()
+		if err != nil {
+			return nil, err
+		}
+		if err := clipboard.Write(text); err != nil {
+			return nil, err
+		}
+		p, n := preview(text)
+		a.mu.Lock()
+		a.clipIn = &clipNote{Device: d.Name, Text: p, Chars: n, At: time.Now()}
+		a.clipFull = text
+		a.mu.Unlock()
+		a.hub.changed()
+		return map[string]any{"chars": n}, nil
 	})
 	h("/api/folders/default", func(r *http.Request) (any, error) {
 		var in struct{ Key string }

@@ -9,20 +9,24 @@ package com.nikhil.lanshare
  *   "share report dot pdf with the office pc"   → Send(NAMED "report.pdf")
  *   "get budget.xlsx from my laptop"            → Get("budget.xlsx")
  *   "is my laptop online"                       → Status
+ *   "send my clipboard to my laptop"            → Send(CLIPBOARD)
+ *   "paste from my laptop"                      → Paste (its clipboard, onto this phone's)
  */
 object Commands {
-    enum class What { THIS, PHOTO, SCREENSHOT, VIDEO, DOWNLOAD, NAMED }
+    enum class What { THIS, PHOTO, SCREENSHOT, VIDEO, DOWNLOAD, CLIPBOARD, NAMED }
 
     sealed class Command {
         /** [device] is one of the names passed to [parse], or null if none was named (or it's unclear). */
         data class Send(val what: What, val name: String?, val device: String?, val folder: String?) : Command()
         data class Get(val name: String, val device: String?) : Command()
         data class Status(val device: String?) : Command()
+        /** Copy the laptop's clipboard onto this phone's. */
+        data class Paste(val device: String?) : Command()
         object Unknown : Command()
     }
 
     private val sendVerbs = setOf("send", "share", "transfer", "move", "put", "upload", "throw", "push", "copy")
-    private val getVerbs = setOf("get", "fetch", "download", "bring", "grab", "pull", "open")
+    private val getVerbs = setOf("get", "fetch", "download", "bring", "grab", "pull", "open", "paste")
     private val generic = setOf("laptop", "computer", "pc", "desktop", "windows", "notebook", "machine")
     private val filler = setOf("the", "my", "a", "an", "please", "file", "called", "named", "last", "latest", "recent",
         "most", "newest", "folder", "directory", "to", "in", "into", "on", "s", "of", "me", "for", "it", "just", "now")
@@ -42,6 +46,8 @@ object Commands {
 
         if (verb in getVerbs && (" from " in " $rest " || verb != "copy")) {
             val (obj, from) = splitAt(rest, listOf("from", "off", "on"))
+            // "paste from my laptop", "get the clipboard from my laptop", "get what I copied on the laptop"
+            if (verb == "paste" || isClipboard(obj)) return Command.Paste(findDevice(from ?: "", devices))
             val name = cleanName(obj) ?: return Command.Unknown
             return Command.Get(name, findDevice(from ?: "", devices))
         }
@@ -85,9 +91,15 @@ object Commands {
         return padded.substring(0, best).trim() to padded.substring(best + len).trim()
     }
 
+    private fun isClipboard(obj: String): Boolean {
+        val w = obj.split(' ').toSet()
+        return "clipboard" in w || "clip" in w || "copied" in w
+    }
+
     private fun whatOf(obj: String): What {
         val w = obj.split(' ').toSet()
         return when {
+            isClipboard(obj) -> What.CLIPBOARD
             w.any { it in setOf("this", "it", "that", "these", "those") } && w.none { '.' in it } -> What.THIS
             w.any { it.startsWith("screenshot") || it == "screen" } -> What.SCREENSHOT
             w.any { it in setOf("photo", "photos", "picture", "pic", "pics", "image", "selfie", "snap") } -> What.PHOTO

@@ -34,6 +34,8 @@ func main() {
 	sendFile := flag.String("send", "", "after starting, send this file to the paired laptop (Downloads)")
 	slowMB := flag.Int64("slow", 0, "receive at most this many MB per second (to test cancelling)")
 	cantReach := flag.Bool("cant-reach", false, "pretend this phone can't connect to the laptop (firewall test)")
+	clipPush := flag.String("clip-push", "", "after starting, put this text on the paired laptop's clipboard")
+	clipText := flag.String("clip-text", "", "this fake phone's clipboard, for 'paste from phone'")
 	allowPair := flag.String("allow-pair", "", "open pairing (like a phone showing its code) and write {code,id} to this file")
 	fetch := flag.String("fetch", "", "after starting, get folder:name from the paired laptop into inbox/Fetched")
 	flag.Parse()
@@ -99,6 +101,28 @@ func main() {
 		}
 	}}
 	srv.Throttle = *slowMB << 20
+	srv.OnClip = func(_, from, text string) bool { log.Printf("clipboard from %s: %q", from, text); return true }
+	srv.ClipText = func() (string, bool, string) {
+		if *clipText == "" {
+			return "", false, "LAN Share isn't open on the phone"
+		}
+		return *clipText, true, ""
+	}
+	if *clipPush != "" {
+		go func() {
+			time.Sleep(time.Second)
+			for _, d := range ts.List() {
+				c, err := client.Dial(d.Addr, d.ID, id, *name, 5*time.Second)
+				if err != nil {
+					log.Printf("clip: %v", err)
+					continue
+				}
+				err = c.PushClip(*clipPush)
+				c.Close()
+				log.Printf("clip sent to %s: %v", d.Name, err)
+			}
+		}()
+	}
 	srv.Platform = "android"
 	if *allowPair != "" {
 		code, _, err := srv.StartPairing()

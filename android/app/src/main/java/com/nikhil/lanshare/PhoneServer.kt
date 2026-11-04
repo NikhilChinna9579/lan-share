@@ -127,6 +127,22 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                 "list_request" -> if (browsable()) list(conn, msg) else notAllowed(conn)
                 "file_offer" -> receive(conn, peer!!, msg)
                 "fetch_request" -> if (browsable()) serveFetch(conn, peer!!, msg) else notAllowed(conn)
+                "clip_push" -> {
+                    val text = msg.optString("text")
+                    if (!Clip.enabled(ctx) || text.toByteArray().size > Clip.MAX) {
+                        conn.send(JSONObject().put("type", "error").put("code", "not_allowed").put("message", "clipboard sharing is off on $myName"))
+                    } else {
+                        Clip.write(ctx, text, peer!!.name)
+                        conn.send(JSONObject().put("type", "clip_ok"))
+                    }
+                }
+                "clip_request" -> {
+                    val (text, why) = Clip.readForLaptop(ctx)
+                    val r = JSONObject().put("type", "clip_response").put("available", text != null)
+                    if (text != null) r.put("text", text) else r.put("reason", why)
+                    conn.send(r)
+                    Log.i("LanShare", "clipboard asked for by ${peer!!.name}: " + if (text != null) "${text.length} chars" else why)
+                }
                 "search_request" -> if (browsable()) {
                     val arr = JSONArray()
                     SharedFolders.search(ctx, msg.optString("query")).forEach { h ->

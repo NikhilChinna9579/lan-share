@@ -131,6 +131,24 @@ object Client {
             saved
         }
 
+    /** Puts text on the laptop's clipboard. */
+    fun pushClip(device: Device, myName: String, text: String) =
+        PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            conn.send(JSONObject().put("type", "clip_push").put("text", text))
+            val r = conn.receive()
+            if (r.optString("type") != "clip_ok") throw IllegalStateException(
+                if (r.optString("code") == "not_allowed") "${device.name} has clipboard sharing turned off." else "${device.name} didn't take it.")
+        }
+
+    /** The laptop's clipboard text ("paste from laptop"). */
+    fun requestClip(device: Device, myName: String): String =
+        PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            conn.send(JSONObject().put("type", "clip_request"))
+            val r = conn.expect("clip_response")
+            if (!r.optBoolean("available")) throw IllegalStateException(r.optString("reason").replaceFirstChar { it.uppercase() } + ".")
+            r.optString("text")
+        }
+
     class Hit(val folder: String, val path: String, val name: String, val size: Long, val modified: Long)
 
     /** Finds files by name in all of the laptop's shared folders (and subfolders). */
