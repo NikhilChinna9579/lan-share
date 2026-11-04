@@ -3,7 +3,25 @@
 Send files between an Android phone and a Windows laptop over home Wi-Fi — by voice,
 from a floating bubble, with no cloud, no login and no messaging app in between.
 
-**Status:** spike — pair the phone with the laptop by QR and send files over encrypted Wi-Fi. Next: presence, tray app, bubble, voice.
+**Status:** working on the same Wi-Fi. Internet relay, online AI and wake word are planned.
+
+## What it does
+
+- **Pair once**: scan the laptop's QR code; pair phones with each other using a 6-digit code.
+  Devices find each other again by themselves when Wi-Fi addresses change.
+- **Send both ways**: files or whole folders (subfolders kept), into any shared folder or
+  subfolder, or a new folder made on the spot. Live progress, time taken, speed, Cancel, Retry.
+  Big transfers that get cut off **resume** where they stopped.
+- **Get files from the other device**: browse its shared folders, or **search** them all by name.
+- **Voice assistant** in a **floating bubble**: "send this to my laptop in Documents",
+  "send the last photo to my laptop", "get budget from my laptop". Asks follow-up questions,
+  pauses 2 s so you can cancel. Speech is offline-first with an online fallback.
+- **Your choices**: which folders are shared, ask before receiving (Accept/Decline),
+  whether others may browse your files, device names, the laptop's default folder.
+- **Secure**: mutual TLS 1.3 with pinned keys; nothing outside shared folders is reachable;
+  the laptop's key is encrypted by Windows (DPAPI).
+- **Windows app**: a small window plus tray icon, Explorer "Send to", drag and drop, install,
+  start with Windows, firewall fix.
 
 ## Where things are
 
@@ -16,11 +34,10 @@ from a floating bubble, with no cloud, no login and no messaging app in between.
 
 ## Getting the apps
 
-Every push builds both apps on GitHub Actions:
+After a green **build and test** run (started by hand in the Actions tab), the newest
+`lanshare.exe` and `lanshare.apk` are on the [`builds`](../../tree/builds) branch.
 
-1. Open the **Actions** tab, click the latest green **build** run.
-2. Scroll to **Artifacts** and download `lanshare-windows` (the .exe) and
-   `lanshare-android` (the APK).
+1. Download both from the `builds` branch.
 3. Phone: open the APK and allow "install unknown apps" for your browser or file manager.
 4. Laptop: run `lanshare.exe`. Windows SmartScreen may warn because the app isn't signed —
    choose **More info → Run anyway**.
