@@ -11,15 +11,23 @@ import java.util.concurrent.CopyOnWriteArrayList
  * The screen listens and redraws as things change, so status is always live.
  */
 object Hub {
-    enum class State { RUNNING, DONE, ERROR }
+    enum class State { RUNNING, DONE, ERROR, CANCELLED }
 
     class Transfer(
         val id: String, val inbound: Boolean, val device: String,
         @Volatile var name: String = "", @Volatile var sent: Long = 0, @Volatile var total: Long = 0,
         @Volatile var files: Int = 0, @Volatile var state: State = State.RUNNING,
         @Volatile var message: String = "", @Volatile var folder: String = "",
+        @Volatile var index: Int = 1, @Volatile var count: Int = 1,
         val started: Long = System.currentTimeMillis(), @Volatile var updated: Long = System.currentTimeMillis(),
-    )
+        @Volatile var elapsed: Long = 0,            // ms, set when it ends
+        @Volatile var cancel: (() -> Unit)? = null, // stops it while running
+        @Volatile var retry: (() -> Unit)? = null,  // sends it again (outgoing only)
+        @Volatile var cancelled: Boolean = false,
+    ) {
+        val speed get() = if (state == State.DONE && elapsed > 0) total * 1000 / elapsed
+            else sent * 1000 / maxOf(System.currentTimeMillis() - started, 1)
+    }
 
     data class Item(val time: Long, val kind: String, val text: String, val detail: String = "")
 
@@ -49,22 +57,53 @@ object Hub {
         val t = transfers.getOrPut(id) { Transfer(id, inbound, device) }
         update(t)
         t.updated = System.currentTimeMillis()
+        if (t.state != State.RUNNING && t.elapsed == 0L) t.elapsed = t.updated - t.started
         while (transfers.size > 6) transfers.remove(transfers.keys.first())
         changed()
     }
 
-    /** Running transfers, plus finished ones for a few seconds. Newest first. */
+    /** Running transfers, finished ones for a few seconds, failed ones until dismissed. Newest first. */
     @Synchronized
     fun visibleTransfers(): List<Transfer> {
         val now = System.currentTimeMillis()
-        return transfers.values.filter { it.state == State.RUNNING || now - it.updated < 8_000 }.reversed()
+        return transfers.values.filter {
+            it.state == State.RUNNING || now - it.updated < 8_000 ||
+                (it.state != State.DONE && it.retry != null && now - it.updated < 30 * 60_000)
+        }.reversed()
     }
+
+    @Synchronized
+    fun dismiss(id: String) { transfers.remove(id); changed() }
+
+    @Synchronized
+    fun get(id: String): Transfer? = transfers[id]
 
     @Synchronized
     fun add(kind: String, text: String, detail: String = "") {
         items.addFirst(Item(System.currentTimeMillis(), kind, text, detail))
         while (items.size > 30) items.removeLast()
+        save()
         changed()
+    }
+
+    // History survives app restarts: kept in the app's private preferences.
+    private var prefs: android.content.SharedPreferences? = null
+
+    @Synchronized
+    fun init(ctx: android.content.Context) {
+        if (prefs != null) return
+        prefs = ctx.applicationContext.getSharedPreferences("history", android.content.Context.MODE_PRIVATE)
+        val arr = org.json.JSONArray(prefs!!.getString("items", "[]"))
+        if (items.isEmpty()) for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            items.addLast(Item(o.getLong("t"), o.getString("k"), o.getString("x"), o.optString("d")))
+        }
+    }
+
+    private fun save() {
+        val arr = org.json.JSONArray()
+        items.forEach { arr.put(org.json.JSONObject().put("t", it.time).put("k", it.kind).put("x", it.text).put("d", it.detail)) }
+        prefs?.edit()?.putString("items", arr.toString())?.apply()
     }
 
     @Synchronized

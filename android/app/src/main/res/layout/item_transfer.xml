@@ -47,6 +47,28 @@
                 android:maxLines="2"
                 android:textSize="13sp" />
         </LinearLayout>
+
+        <Button
+            android:id="@+id/tAction"
+            style="@style/Button.Tonal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:minHeight="36dp"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/tDismiss"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="Dismiss"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_close"
+            android:tint="@color/ink_muted"
+            android:visibility="gone" />
     </LinearLayout>
 
     <ProgressBar

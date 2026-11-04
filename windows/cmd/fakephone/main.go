@@ -31,6 +31,7 @@ func main() {
 	name := flag.String("name", "Test phone", "phone name")
 	port := flag.Int("port", 47821, "port to receive on")
 	sendFile := flag.String("send", "", "after starting, send this file to the paired laptop (Downloads)")
+	slowMB := flag.Int64("slow", 0, "receive at most this many MB per second (to test cancelling)")
 	cantReach := flag.Bool("cant-reach", false, "pretend this phone can't connect to the laptop (firewall test)")
 	flag.Parse()
 
@@ -72,6 +73,7 @@ func main() {
 			log.Printf("received %s (%d bytes) from %s", e.Path, e.Bytes, e.Device)
 		}
 	}}
+	srv.Throttle = *slowMB << 20
 	if *cantReach {
 		no := false
 		srv.ReportReach = &no

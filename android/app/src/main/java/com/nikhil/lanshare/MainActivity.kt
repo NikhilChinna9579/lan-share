@@ -98,6 +98,7 @@ class MainActivity : Activity() {
         pairAnother.setOnClickListener { scanQr() }
         findViewById<View>(R.id.settingsButton).setOnClickListener { showSharedFolders(firstTime = false) }
 
+        Hub.init(this)
         presence = Presence(this, myName) { renderDevices() }
         worker.execute { runCatching { Identity.ensure(myName) } } // creating the key takes a moment
         askNotificationPermission()
@@ -197,31 +198,57 @@ class MainActivity : Activity() {
             val title = v.findViewById<TextView>(R.id.tTitle)
             val sub = v.findViewById<TextView>(R.id.tSub)
             val bar = v.findViewById<ProgressBar>(R.id.tProgress)
+            val action = v.findViewById<Button>(R.id.tAction)
+            val dismiss = v.findViewById<View>(R.id.tDismiss)
             val dir = if (t.inbound) "From" else "To"
+            action.visibility = View.GONE
+            dismiss.visibility = View.GONE
             when (t.state) {
                 Hub.State.RUNNING -> {
                     badge(icon, if (t.inbound) R.drawable.ic_download else R.drawable.ic_upload, R.color.primary_container, R.color.on_primary_container)
                     title.text = (if (t.inbound) "Receiving " else "Sending ") + t.name.ifEmpty { "…" }
-                    val secs = maxOf(System.currentTimeMillis() - t.started, 1) / 1000.0
-                    sub.text = "$dir ${t.device} · ${formatSize(t.sent)} of ${formatSize(t.total)}" +
-                        if (t.sent > 0) " · ${formatSize((t.sent / secs).toLong())}/s" else ""
+                    val elapsed = System.currentTimeMillis() - t.started
+                    sub.text = "$dir ${t.device}" + (if (t.count > 1) " · file ${t.index} of ${t.count}" else "") +
+                        " · ${formatSize(t.sent)} of ${formatSize(t.total)}" +
+                        (if (t.sent > 0) " · ${formatSize(t.speed)}/s" else "") + " · ${formatDuration(elapsed)}"
                     bar.visibility = View.VISIBLE
                     bar.progress = if (t.total > 0) (t.sent * 1000 / t.total).toInt() else 0
+                    t.cancel?.let { stop ->
+                        action.visibility = View.VISIBLE
+                        action.text = "Cancel"
+                        action.setOnClickListener { worker.execute { stop() } }
+                    }
                 }
                 Hub.State.DONE -> {
                     badge(icon, R.drawable.ic_check_circle, R.color.success_container, R.color.online)
                     val what = if (t.files > 1) "${t.files} files" else t.name
                     title.text = (if (t.inbound) "Received " else "Sent ") + what
-                    sub.text = "$dir ${t.device} · in ${t.folder} · ${formatSize(t.total)}"
+                    sub.text = "$dir ${t.device} · in ${t.folder} · ${formatSize(t.total)} in ${formatDuration(t.elapsed)} · ${formatSize(t.speed)}/s"
                     bar.visibility = View.GONE
                 }
-                Hub.State.ERROR -> {
-                    badge(icon, R.drawable.ic_error, R.color.error_container, R.color.error)
-                    title.text = if (t.inbound) "Receiving from ${t.device} failed" else "Couldn't send to ${t.device}"
+                Hub.State.ERROR, Hub.State.CANCELLED -> {
+                    badge(icon, if (t.state == Hub.State.CANCELLED) R.drawable.ic_close else R.drawable.ic_error, R.color.error_container, R.color.error)
+                    title.text = when {
+                        t.state == Hub.State.CANCELLED -> "Cancelled " + (if (t.inbound) "receiving from " else "sending to ") + t.device
+                        t.inbound -> "Receiving from ${t.device} failed"
+                        else -> "Couldn't send to ${t.device}"
+                    }
                     sub.text = t.message
                     bar.visibility = View.GONE
+                    t.retry?.let { again ->
+                        action.visibility = View.VISIBLE
+                        action.text = "Retry"
+                        action.setOnClickListener { Hub.dismiss(t.id); again() }
+                    }
+                    dismiss.visibility = View.VISIBLE
+                    dismiss.setOnClickListener { Hub.dismiss(t.id) }
                 }
             }
+        }
+        // While anything is running, tick once a second so the timer moves.
+        if (list.any { it.state == Hub.State.RUNNING }) {
+            main.removeCallbacks(tick)
+            main.postDelayed(tick, 1_000)
         }
         // Finished cards disappear by themselves a few seconds later.
         if (list.any { it.state != Hub.State.RUNNING }) {
@@ -231,6 +258,7 @@ class MainActivity : Activity() {
     }
 
     private val refreshLater = Runnable { renderTransfers() }
+    private val tick = Runnable { if (!isFinishing) renderTransfers() }
 
     private fun renderRecent() {
         val items = Hub.recent().take(8)
@@ -559,21 +587,36 @@ class MainActivity : Activity() {
     private fun send(d: Device, folder: Client.Folder, path: String, where: String, items: List<Client.Outgoing>) {
         val id = UUID.randomUUID().toString()
         val total = items.sumOf { it.size }
-        Hub.transfer(id, false, d.name) { it.total = total; it.name = items.first().name }
+        val what = items.singleOrNull()?.name ?: plural(items.size, "file")
+        Hub.transfer(id, false, d.name) {
+            it.total = total; it.name = items.first().name; it.count = items.size; it.index = 1; it.folder = where
+            it.cancel = { it.cancelled = true } // until connected; then it also cuts the connection
+        }
         worker.execute {
             val result = runCatching {
-                Client.send(DeviceStore.get(this, d.id) ?: d, myName, folder.key, path, items) { sent, _ ->
-                    Hub.transfer(id, false, d.name) { t -> t.sent = sent }
+                Client.send(DeviceStore.get(this, d.id) ?: d, myName, folder.key, path, items,
+                    onConnected = { conn ->
+                        Hub.transfer(id, false, d.name) { t -> t.cancel = { t.cancelled = true; conn.abort() } }
+                        if (Hub.get(id)?.cancelled == true) conn.abort()
+                    }) { sent, _, index ->
+                    Hub.transfer(id, false, d.name) { t -> t.sent = sent; t.index = index + 1; t.name = items[index].name }
                 }
             }
+            val again = { send(d, folder, path, where, items) }
             result.onSuccess {
-                Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.DONE; t.sent = total; t.files = items.size; t.folder = where }
-                val what = items.singleOrNull()?.name ?: plural(items.size, "file")
-                Hub.add("sent", "Sent $what to ${d.name}", "In $where · ${formatSize(total)}")
+                Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.DONE; t.sent = total; t.files = items.size; t.cancel = null }
+                val took = Hub.get(id)?.elapsed ?: 0
+                Hub.add("sent", "Sent $what to ${d.name}",
+                    "In $where · ${formatSize(total)} in ${formatDuration(took)} (${formatSize(total * 1000 / maxOf(took, 1))}/s)")
             }.onFailure { e ->
-                val msg = friendly(e, d)
-                Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.ERROR; t.message = msg }
-                Hub.add("error", "Couldn't send to ${d.name}", msg)
+                if (Hub.get(id)?.cancelled == true) {
+                    Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.CANCELLED; t.message = "Cancelled. Nothing was kept on ${d.name}."; t.retry = again; t.cancel = null }
+                    Hub.add("info", "Cancelled sending $what to ${d.name}")
+                } else {
+                    val msg = friendly(e, d)
+                    Hub.transfer(id, false, d.name) { t -> t.state = Hub.State.ERROR; t.message = msg; t.retry = again; t.cancel = null }
+                    Hub.add("error", "Couldn't send $what to ${d.name}", msg)
+                }
             }
         }
     }
@@ -622,6 +665,11 @@ class MainActivity : Activity() {
                 "receiving" -> Hub.transfer("demo-in", true, d.name) { it.name = "Quarterly report.pdf"; it.total = 9_000_000; it.sent = 2_700_000 }
                 "error" -> showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(ConnectException(), d), device = d.id)
                 "folders" -> showSharedFolders(firstTime = true)
+                "send_big" -> {
+                    val f = File(cacheDir, "Big video.mp4")
+                    f.outputStream().use { out -> val b = ByteArray(1 shl 20); repeat(200) { out.write(b) } } // 200 MB
+                    chooseFolder(d, listOf(Uri.fromFile(f)))
+                }
                 "send_test" -> {
                     val f = File(cacheDir, "IMG_2041.jpg")
                     f.outputStream().use { out -> val b = ByteArray(1 shl 16); repeat(32) { java.util.Random(it.toLong()).nextBytes(b); out.write(b) } }

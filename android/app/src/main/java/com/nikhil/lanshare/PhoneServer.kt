@@ -22,7 +22,7 @@ import javax.net.ssl.X509TrustManager
 class PhoneServer(private val ctx: Context, private val myName: String, private val onReceived: (Received) -> Unit) {
 
     class Saved(val name: String, val uri: Uri, val mime: String, val size: Long)
-    class Received(val from: String, val where: String, val files: List<Saved>)
+    class Received(val from: String, val where: String, val files: List<Saved>, val tookMs: Long)
 
     private var server: SSLServerSocket? = null
     private val pool = Executors.newCachedThreadPool()
@@ -94,7 +94,7 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                     conn.send(JSONObject().put("type", "folders_response").put("default", SharedFolders.DEFAULT).put("folders", arr))
                 }
                 "list_request" -> list(conn, msg)
-                "file_offer" -> receive(conn, peerId, peer, msg)
+                "file_offer" -> receive(conn, peer, msg)
                 else -> conn.send(JSONObject().put("type", "error").put("code", "unknown_type"))
             }
         }
@@ -113,7 +113,7 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
             .put("dirs", JSONArray(l.dirs)).put("files", files))
     }
 
-    private fun receive(conn: PeerConnection, peerId: String, peer: Device, offer: JSONObject) {
+    private fun receive(conn: PeerConnection, peer: Device, offer: JSONObject) {
         val tid = offer.optString("transfer_id").ifEmpty { System.nanoTime().toString() }
         fun reject(reason: String) = conn.send(JSONObject().put("type", "file_reject").put("transfer_id", tid).put("reason", reason))
 
@@ -137,7 +137,10 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
         val buf = ByteArray(64 * 1024)
         try {
             for (i in names.indices) {
-                Hub.transfer(tid, true, peer.name) { it.name = names[i]; it.total = total }
+                Hub.transfer(tid, true, peer.name) {
+                    it.name = names[i]; it.total = total; it.index = i + 1; it.count = names.size
+                    it.cancel = { it.cancelled = true; conn.abort() }
+                }
                 val inc = SharedFolders.create(ctx, folder, path, names[i])
                 where = inc.savedIn
                 var ok = false
@@ -170,17 +173,23 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                 }
             }
         } catch (e: Exception) {
-            Hub.transfer(tid, true, peer.name) { it.state = Hub.State.ERROR; it.message = e.message ?: "failed" }
-            Hub.add("error", "Receiving from ${peer.name} failed", e.message ?: "")
+            if (Hub.get(tid)?.cancelled == true) {
+                Hub.transfer(tid, true, peer.name) { it.state = Hub.State.CANCELLED; it.message = "Cancelled. Nothing was kept." }
+                Hub.add("info", "Cancelled receiving from ${peer.name}", "Nothing was kept")
+            } else {
+                Hub.transfer(tid, true, peer.name) { it.state = Hub.State.ERROR; it.message = e.message ?: "failed" }
+                Hub.add("error", "Receiving from ${peer.name} failed", e.message ?: "")
+            }
             throw e
         }
         val out = JSONArray()
         saved.forEach { out.put(it.name) }
         conn.send(JSONObject().put("type", "transfer_done").put("transfer_id", tid).put("saved", out))
-        Hub.transfer(tid, true, peer.name) { it.state = Hub.State.DONE; it.sent = total; it.files = saved.size; it.folder = where }
+        Hub.transfer(tid, true, peer.name) { it.state = Hub.State.DONE; it.sent = total; it.files = saved.size; it.folder = where; it.cancel = null }
+        val took = Hub.get(tid)?.elapsed ?: 0
         val what = saved.singleOrNull()?.name ?: plural(saved.size, "file")
-        Hub.add("received", "Received $what", "From ${peer.name} · ${formatSize(total)} · in $where")
-        onReceived(Received(peer.name, where, saved))
+        Hub.add("received", "Received $what", "From ${peer.name} · ${formatSize(total)} in ${formatDuration(took)} · in $where")
+        onReceived(Received(peer.name, where, saved, took))
     }
 
     /** Lets in only laptops we have paired with; everyone else fails the TLS handshake. */

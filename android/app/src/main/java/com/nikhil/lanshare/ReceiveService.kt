@@ -29,6 +29,7 @@ class ReceiveService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Hub.init(this)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CH_READY, "Ready to receive", NotificationManager.IMPORTANCE_MIN).apply {
             description = "Shown while LAN Share can receive files from your laptops"
@@ -109,7 +110,7 @@ class ReceiveService : Service() {
         val n = Notification.Builder(this, CH_RECEIVED)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle(single?.let { "Received ${it.name}" } ?: "Received ${plural(r.files.size, "file")}")
-            .setContentText("From ${r.from} · ${formatSize(total)} · in ${r.where}")
+            .setContentText("From ${r.from} · ${formatSize(total)} in ${formatDuration(r.tookMs)} · in ${r.where}")
             .setContentIntent(pi)
             .setAutoCancel(true)
             .build()

@@ -62,6 +62,12 @@ class PeerConnection(private val socket: SSLSocket) : Closeable {
 
     override fun close() = socket.close()
 
+    /** Cuts the connection at once (Cancel): data in flight is dropped, the other side stops. */
+    fun abort() {
+        runCatching { socket.setSoLinger(true, 0) }
+        runCatching { socket.close() }
+    }
+
     companion object {
         private const val IDLE_TIMEOUT_MS = 15_000
 

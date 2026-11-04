@@ -57,6 +57,8 @@ type Event struct {
 	Name     string        // EventProgress: file being received
 	Total    int64         // EventProgress: bytes in the whole transfer
 	Done     bool          // EventReceived: last file of the transfer
+	Index    int           // EventProgress: file number, 0-based
+	Count    int           // EventProgress: files in the transfer
 }
 
 // Server holds everything needed to answer peers.
@@ -69,12 +71,46 @@ type Server struct {
 	// ReportReach, if set, is sent in every pong: whether we can connect back to
 	// the pinging device. The phone simulator uses it to imitate a blocked firewall.
 	ReportReach *bool
+	// Throttle (testing) limits how fast files are received, in bytes per second.
+	Throttle int64
 
 	mu         sync.Mutex
 	pairCode   string
 	pairExpiry time.Time
 	pairFails  int
 	contacts   map[string]time.Time
+	active     map[string]net.Conn // transfer id → its connection, while receiving
+}
+
+func (s *Server) track(id string, c net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active == nil {
+		s.active = map[string]net.Conn{}
+	}
+	if c == nil {
+		delete(s.active, id)
+	} else {
+		s.active[id] = c
+	}
+}
+
+// Cancel stops receiving a transfer: the connection is closed, and the partly
+// received files are deleted (as for any interrupted transfer).
+func (s *Server) Cancel(transferID string) {
+	s.mu.Lock()
+	c := s.active[transferID]
+	s.mu.Unlock()
+	if c != nil {
+		if tc, ok := c.(*tls.Conn); ok {
+			if tcp, ok := tc.NetConn().(*net.TCPConn); ok {
+				tcp.SetLinger(0) // reset: the sender stops at once
+			}
+			tc.NetConn().Close()
+			return
+		}
+		c.Close()
+	}
 }
 
 // StartPairing opens a 2-minute pairing window and returns its one-time code.
@@ -190,7 +226,10 @@ func (s *Server) handle(c *tls.Conn) {
 			if json.Unmarshal(raw, &offer) != nil {
 				return
 			}
-			if err = s.receive(conn, peerID, peer.Name, offer); err != nil {
+			s.track(offer.TransferID, c)
+			err = s.receive(conn, peerID, peer.Name, offer)
+			s.track(offer.TransferID, nil)
+			if err != nil {
 				s.emit(Event{Kind: EventFailed, DeviceID: peerID, Device: peer.Name, Err: err})
 				return
 			}
@@ -332,8 +371,13 @@ func (s *Server) receive(conn io.ReadWriter, peerID, from string, offer protocol
 		}
 		parts = append(parts, part)
 		h := sha256.New()
-		pw := &progressWriter{s: s, ev: Event{Kind: EventProgress, DeviceID: peerID, Device: from, Transfer: offer.TransferID, Name: names[i], Total: total}, done: doneBefore}
-		_, err = io.CopyN(io.MultiWriter(out, h, pw), conn, f.Size)
+		pw := &progressWriter{s: s, ev: Event{Kind: EventProgress, DeviceID: peerID, Device: from, Transfer: offer.TransferID,
+			Name: names[i], Total: total, Index: i, Count: len(names)}, done: doneBefore}
+		var src io.Reader = conn
+		if s.Throttle > 0 {
+			src = &slowReader{r: conn, rate: s.Throttle}
+		}
+		_, err = io.CopyN(io.MultiWriter(out, h, pw), src, f.Size)
 		doneBefore += f.Size
 		if cerr := out.Close(); err == nil {
 			err = cerr
@@ -371,6 +415,18 @@ func (s *Server) emit(e Event) {
 	if s.OnEvent != nil {
 		s.OnEvent(e)
 	}
+}
+
+// slowReader (testing) reads at most rate bytes per second.
+type slowReader struct {
+	r    io.Reader
+	rate int64
+}
+
+func (s *slowReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	time.Sleep(time.Duration(int64(n) * int64(time.Second) / s.rate))
+	return n, err
 }
 
 // progressWriter reports receive progress at most ~6 times a second.

@@ -26,13 +26,26 @@ var ErrWrongDevice = errors.New("a different device answered at that address")
 // Conn is one connection to a peer, hello already exchanged.
 type Conn struct {
 	c        *tls.Conn
+	raw      net.Conn
 	PeerName string
+}
+
+// Abort cuts the connection at once (used for Cancel). Close is polite and waits for
+// the chunk in flight; Abort doesn't, so the other side stops and cleans up right away.
+func (c *Conn) Abort() {
+	if tcp, ok := c.raw.(*net.TCPConn); ok {
+		tcp.SetLinger(0) // send a reset: data still in flight is thrown away
+	}
+	c.raw.Close()
 }
 
 // Dial connects to addr and accepts only the device whose fingerprint is pinnedID.
 func Dial(addr, pinnedID string, me *identity.Identity, myName string, timeout time.Duration) (*Conn, error) {
-	d := &net.Dialer{Timeout: timeout}
-	c, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{
+	raw, err := (&net.Dialer{Timeout: timeout}).Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	c := tls.Client(raw, &tls.Config{
 		MinVersion:         tls.VersionTLS13,
 		Certificates:       []tls.Certificate{me.Cert},
 		InsecureSkipVerify: true, // no CA chain to check; VerifyPeerCertificate pins the key instead
@@ -47,14 +60,16 @@ func Dial(addr, pinnedID string, me *identity.Identity, myName string, timeout t
 			return nil
 		},
 	})
-	if err != nil {
+	c.SetDeadline(time.Now().Add(timeout + 5*time.Second))
+	if err := c.Handshake(); err != nil {
+		raw.Close()
 		var recErr tls.RecordHeaderError
 		if errors.As(err, &recErr) {
 			return nil, ErrWrongDevice
 		}
 		return nil, err
 	}
-	conn := &Conn{c: c}
+	conn := &Conn{c: c, raw: raw}
 	c.SetDeadline(time.Now().Add(15 * time.Second))
 	if err := protocol.WriteFrame(c, protocol.Hello{Type: "hello", V: protocol.Version, Name: myName, Platform: "windows"}); err != nil {
 		c.Close()

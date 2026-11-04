@@ -63,6 +63,7 @@
 
   .tr { padding:14px 16px; margin-bottom:10px; }
   .tr .row { display:flex; align-items:center; gap:12px; }
+  .tr .btn { height:34px; padding:0 14px; font-size:13px; }
   .badge { width:40px; height:40px; border-radius:50%; display:grid; place-items:center; flex:none; background:var(--brand-soft); color:var(--on-brand-soft); }
   .badge.ok { background:var(--ok-soft); color:var(--ok); } .badge.bad { background:var(--bad-soft); color:var(--bad); }
   .grow { flex:1; min-width:0; }
@@ -221,6 +222,14 @@ function size(n) {
   if (n >= 1 << 10) return Math.round(n / 1024) + " KB";
   return n + " B";
 }
+function dur(ms) {
+  const s = ms / 1000;
+  if (s < 0.1) return "under 0.1 s";
+  if (s < 10) return s.toFixed(1) + " s";
+  if (s < 60) return Math.round(s) + " s";
+  if (s < 3600) return Math.floor(s / 60) + " min " + Math.round(s % 60) + " s";
+  return Math.floor(s / 3600) + " h " + Math.round((s % 3600) / 60) + " min";
+}
 function ago(t) {
   const d = (Date.now() - new Date(t).getTime()) / 1000;
   if (d < 45) return "just now";
@@ -257,25 +266,33 @@ function render() {
   }
   $("banners").innerHTML = b;
 
-  // Transfers in progress (and just finished).
+  // Transfers in progress (and just finished), with time taken.
   $("transfers").innerHTML = S.transfers.map((t) => {
     const pct = t.total ? Math.min(100, (t.sent / t.total) * 100) : (t.state === "done" ? 100 : 0);
-    const inbound = t.dir === "in";
-    let cls = "", ic = inbound ? "down" : "up", title, sub;
+    const inbound = t.dir === "in", dirWord = inbound ? "From" : "To";
+    const many = t.count > 1;
+    let cls = "", ic = inbound ? "down" : "up", title, sub, actions = "";
     if (t.state === "running") {
+      const el = Date.now() - new Date(t.started).getTime();
       title = `${inbound ? "Receiving" : "Sending"} ${esc(t.name || "…")}`;
-      sub = `${inbound ? "From" : "To"} ${esc(t.device)} · ${size(t.sent)} of ${size(t.total)}` + (t.speed ? ` · ${size(t.speed)}/s` : "");
+      sub = `${dirWord} ${esc(t.device)}` + (many ? ` · file ${t.index} of ${t.count}` : "") +
+        ` · ${size(t.sent)} of ${size(t.total)}` + (t.speed ? ` · ${size(t.speed)}/s` : "") + ` · ${dur(el)}`;
+      actions = `<button class="btn ghost" data-act="cancel" data-id="${t.id}">Cancel</button>`;
     } else if (t.state === "done") {
       cls = "ok"; ic = "check";
       title = `${inbound ? "Received" : "Sent"} ${t.files > 1 ? t.files + " files" : esc(t.name)}`;
-      sub = `${inbound ? "From" : "To"} ${esc(t.device)}` + (t.folder ? ` · in ${esc(t.folder)}` : "") + ` · ${size(t.total)}`;
+      sub = `${dirWord} ${esc(t.device)}` + (t.folder ? ` · in ${esc(t.folder)}` : "") +
+        ` · ${size(t.total)} in ${dur(t.elapsed)}` + (t.speed ? ` · ${size(t.speed)}/s` : "");
     } else {
-      cls = "bad"; ic = "error";
-      title = `${inbound ? "Receiving from" : "Couldn't send to"} ${esc(t.device)}`;
+      cls = "bad"; ic = t.state === "cancelled" ? "close" : "error";
+      title = t.state === "cancelled" ? `Cancelled ${inbound ? "receiving from" : "sending to"} ${esc(t.device)}`
+                                      : `${inbound ? "Receiving from" : "Couldn't send to"} ${esc(t.device)}`;
       sub = esc(t.message || "Something went wrong");
+      actions = (t.canRetry ? `<button class="btn tonal" data-act="retry" data-id="${t.id}">Retry</button>` : "") +
+        `<button class="btn ghost" data-act="dismiss" data-id="${t.id}">Dismiss</button>`;
     }
     return `<div class="card tr"><div class="row"><div class="badge ${cls}">${icon(ic)}</div>
-      <div class="grow"><div class="t1">${title}</div><div class="t2" title="${sub}">${sub}</div></div></div>
+      <div class="grow"><div class="t1">${title}</div><div class="t2" title="${sub}">${sub}</div></div>${actions}</div>
       ${t.state === "running" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</div>`;
   }).join("");
 
@@ -461,6 +478,9 @@ document.addEventListener("click", async (ev) => {
   try {
     switch (act) {
       case "close": return closeModal();
+      case "cancel": return api("/api/cancel", {id: t.dataset.id});
+      case "retry": return api("/api/retry", {id: t.dataset.id});
+      case "dismiss": return api("/api/dismiss", {id: t.dataset.id});
       case "pair": await api("/api/pair", {}); return openModal({kind: "pair"});
       case "send": return openSend({device: t.dataset.id});
       case "devmenu": return openModal({kind: "devmenu", id: t.dataset.id});
@@ -522,6 +542,7 @@ addEventListener("drop", async (e) => {
 
 setInterval(() => { if (modal && modal.kind === "pair") renderModal(); }, 1000);
 setInterval(render, 30000); // keep "5 min ago" fresh
+setInterval(() => { if (S && S.transfers.some((t) => t.state === "running")) render(); }, 1000); // live timer
 connect();
 </script>
 </body>

@@ -80,8 +80,10 @@ object Client {
      * Sends [items] into [folderKey] (PROTOCOL.md §5, Transfer). Blocking.
      * [progress] gets (bytes sent so far, total). Returns the names the laptop saved.
      */
-    fun send(device: Device, myName: String, folderKey: String, path: String, items: List<Outgoing>, progress: (Long, Long) -> Unit): List<String> =
+    fun send(device: Device, myName: String, folderKey: String, path: String, items: List<Outgoing>,
+             onConnected: (PeerConnection) -> Unit = {}, progress: (Long, Long, Int) -> Unit): List<String> =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            onConnected(conn)
             val files = JSONArray()
             items.forEach { files.put(JSONObject().put("name", it.name).put("size", it.size)) }
             conn.send(JSONObject().put("type", "file_offer").put("transfer_id", UUID.randomUUID().toString())
@@ -104,7 +106,7 @@ object Client {
                         conn.output.write(buf, 0, n)
                         remaining -= n
                         sent += n
-                        progress(sent, total)
+                        progress(sent, total, index)
                     }
                 }
                 conn.send(JSONObject().put("type", "file_end").put("index", index).put("sha256", digest.digest().toHex()))
@@ -142,6 +144,15 @@ object Client {
 }
 
 fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+/** "under 0.1 s", "2.4 s", "38 s", "2 min 5 s" */
+fun formatDuration(ms: Long): String = when {
+    ms < 100 -> "under 0.1 s"
+    ms < 10_000 -> String.format("%.1f s", ms / 1000.0)
+    ms < 60_000 -> "${ms / 1000} s"
+    ms < 3_600_000 -> "${ms / 60_000} min ${(ms / 1000) % 60} s"
+    else -> "${ms / 3_600_000} h ${(ms / 60_000) % 60} min"
+}
 
 /** "2.4 MB" */
 fun formatSize(n: Long): String = when {

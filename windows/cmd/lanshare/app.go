@@ -53,6 +53,7 @@ type app struct {
 	pending   []fileInfo // files handed to us (Send to / drop on .exe) waiting to be sent
 	pendingN  int        // bumps each hand-off so the window knows to open the send view
 	lastSeen  map[string]presence.State
+	cancelled map[string]bool
 }
 
 type activity struct {
@@ -64,19 +65,32 @@ type activity struct {
 }
 
 type transfer struct {
-	ID      string    `json:"id"`
-	Dir     string    `json:"dir"` // "in" or "out"
-	Device  string    `json:"device"`
-	Name    string    `json:"name"` // current file
-	Files   int       `json:"files"`
-	Sent    int64     `json:"sent"`
-	Total   int64     `json:"total"`
-	Speed   int64     `json:"speed"` // bytes per second
-	State   string    `json:"state"` // running, done, error
-	Message string    `json:"message,omitempty"`
-	Folder  string    `json:"folder,omitempty"`
-	Started time.Time `json:"started"`
-	Updated time.Time `json:"updated"`
+	ID       string    `json:"id"`
+	Dir      string    `json:"dir"` // "in" or "out"
+	Device   string    `json:"device"`
+	Name     string    `json:"name"`  // current file
+	Index    int       `json:"index"` // current file, 1-based
+	Count    int       `json:"count"` // files in this transfer
+	Files    int       `json:"files"` // files finished
+	Sent     int64     `json:"sent"`
+	Total    int64     `json:"total"`
+	Speed    int64     `json:"speed"`   // bytes per second (average so far)
+	Elapsed  int64     `json:"elapsed"` // milliseconds, set when it ends
+	State    string    `json:"state"`   // running, done, error, cancelled
+	Message  string    `json:"message,omitempty"`
+	Folder   string    `json:"folder,omitempty"`
+	CanRetry bool      `json:"canRetry"`
+	Started  time.Time `json:"started"`
+	Updated  time.Time `json:"updated"`
+
+	cancel func()   // stops it (closes the connection)
+	retry  *sendReq // how to send it again (outgoing only)
+}
+
+// sendReq is everything needed to (re)send a set of files.
+type sendReq struct {
+	DeviceID, Folder, FolderLabel, Sub string
+	List                               []fileInfo
 }
 
 type pairing struct {
@@ -113,6 +127,10 @@ func newApp(dataDir, logPath string) (*app, error) {
 	}
 	a.tracker = &presence.Tracker{Trust: a.trust, Me: a.id, MyName: a.name, DefaultPort: defaultPort}
 	a.hub = newHub(a.stateJSON)
+	if data, err := os.ReadFile(filepath.Join(dataDir, "history.json")); err == nil {
+		json.Unmarshal(data, &a.activity) // history from earlier runs
+	}
+	os.RemoveAll(filepath.Join(dataDir, "outbox")) // leftovers of dropped files from earlier runs
 	tok := make([]byte, 24)
 	rand.Read(tok)
 	a.token = hex.EncodeToString(tok)
@@ -229,7 +247,9 @@ func (a *app) note(kind, text, detail, path string) {
 	if len(a.activity) > 200 {
 		a.activity = a.activity[len(a.activity)-200:]
 	}
+	data, _ := json.Marshal(a.activity)
 	a.mu.Unlock()
+	os.WriteFile(filepath.Join(a.dataDir, "history.json"), data, 0o600)
 	a.hub.changed()
 }
 
@@ -248,19 +268,27 @@ func (a *app) onServerEvent(e server.Event) {
 		a.tracker.CheckNow()
 	case server.EventProgress:
 		a.updateTransfer(e.Transfer, "in", e.Device, func(t *transfer) {
-			t.Name, t.Sent, t.Total = e.Name, e.Bytes, e.Total
+			t.Name, t.Sent, t.Total, t.Index, t.Count = e.Name, e.Bytes, e.Total, e.Index+1, e.Count
+			tid := e.Transfer
+			t.cancel = func() { a.srv.Cancel(tid) }
 		})
 	case server.EventReceived:
 		folder := a.folderLabel(e.Folder)
-		a.note("received", "Received "+filepath.Base(e.Path), fmt.Sprintf("From %s · %s · in %s", e.Device, sizeStr(e.Bytes), folder), e.Path)
+		a.note("received", "Received "+filepath.Base(e.Path),
+			fmt.Sprintf("From %s · %s in %s · in %s", e.Device, sizeStr(e.Bytes), durStr(e.Duration), folder), e.Path)
 		a.updateTransfer(e.Transfer, "in", e.Device, func(t *transfer) {
 			t.Files++
 			t.Folder = folder
 			if e.Done {
-				t.State, t.Sent = "done", t.Total
+				t.State, t.Sent, t.Elapsed = "done", t.Total, time.Since(t.Started).Milliseconds()
 			}
 		})
 	case server.EventFailed:
+		if a.wasCancelled(e.Transfer) {
+			a.note("info", "Cancelled receiving from "+e.Device, "Nothing was kept.", "")
+			a.updateTransfer(e.Transfer, "in", e.Device, func(t *transfer) { t.State, t.Message = "cancelled", "Cancelled. Nothing was kept." })
+			return
+		}
 		a.note("error", "Receiving from "+e.Device+" failed", e.Err.Error(), "")
 		a.updateTransfer(e.Transfer, "in", e.Device, func(t *transfer) { t.State, t.Message = "error", e.Err.Error() })
 	}
@@ -312,9 +340,16 @@ func (a *app) updateTransfer(id, dir, device string, f func(*transfer)) {
 	}
 	f(t)
 	t.Updated = time.Now()
-	if secs := time.Since(t.Started).Seconds(); secs > 0.2 {
+	if secs := time.Since(t.Started).Seconds(); secs > 0.2 && t.State == "running" {
 		t.Speed = int64(float64(t.Sent) / secs)
 	}
+	if t.State != "running" && t.Elapsed == 0 {
+		t.Elapsed = time.Since(t.Started).Milliseconds()
+	}
+	if t.Elapsed > 0 && t.State == "done" {
+		t.Speed = t.Total * 1000 / max(t.Elapsed, 1)
+	}
+	t.CanRetry = t.retry != nil && (t.State == "error" || t.State == "cancelled")
 	a.mu.Unlock()
 	a.hub.changed()
 }
@@ -406,35 +441,50 @@ func (a *app) dial(id string) (*client.Conn, trust.Device, error) {
 func (a *app) send(deviceID, folder, folderLabel, sub string, list []fileInfo) string {
 	tidb := make([]byte, 8)
 	rand.Read(tidb)
-	tid := hex.EncodeToString(tidb)
+	return a.startSend(hex.EncodeToString(tidb), &sendReq{deviceID, folder, folderLabel, sub, list})
+}
+
+func (a *app) startSend(tid string, req *sendReq) string {
 	var total int64
-	for _, f := range list {
+	for _, f := range req.List {
 		total += f.Size
 	}
-	d, _ := a.trust.Get(deviceID)
-	where := folderLabel
-	if sub != "" {
-		where += "/" + sub
+	d, _ := a.trust.Get(req.DeviceID)
+	where := req.FolderLabel
+	if req.Sub != "" {
+		where += "/" + req.Sub
 	}
-	a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.Total, t.Folder = total, where })
+	a.updateTransfer(tid, "out", d.Name, func(t *transfer) {
+		t.Total, t.Folder, t.Count, t.retry = total, where, len(req.List), req
+		t.Name, t.Index = req.List[0].Name, 1
+	})
 	go func() {
-		err := a.sendNowList(tid, deviceID, folder, sub, list)
-		for _, f := range list {
-			if f.Temp {
-				os.Remove(f.Path)
-			}
+		started := time.Now()
+		err := a.sendNowList(tid, req.DeviceID, req.Folder, req.Sub, req.List)
+		took := time.Since(started)
+		what := fileCount(len(req.List))
+		if len(req.List) == 1 {
+			what = req.List[0].Name
 		}
-		if err != nil {
+		switch {
+		case a.wasCancelled(tid):
+			a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.State, t.Message = "cancelled", "Cancelled. Nothing was kept on the phone." })
+			a.note("info", "Cancelled sending "+what+" to "+d.Name, "", "")
+		case err != nil:
 			a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.State, t.Message = "error", err.Error() })
-			a.note("error", "Couldn't send to "+d.Name, err.Error(), "")
-			return
+			a.note("error", "Couldn't send "+what+" to "+d.Name, err.Error(), "")
+		default:
+			for _, f := range req.List {
+				if f.Temp {
+					os.Remove(f.Path) // a dropped file's copy is no longer needed
+				}
+			}
+			a.updateTransfer(tid, "out", d.Name, func(t *transfer) {
+				t.State, t.Sent, t.Files, t.retry = "done", t.Total, len(req.List), nil
+			})
+			a.note("sent", "Sent "+what+" to "+d.Name,
+				fmt.Sprintf("In %s · %s in %s (%s/s)", where, sizeStr(total), durStr(took), sizeStr(total*1000/max(took.Milliseconds(), 1))), "")
 		}
-		what := fileCount(len(list))
-		if len(list) == 1 {
-			what = list[0].Name
-		}
-		a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.State, t.Sent, t.Files = "done", t.Total, len(list) })
-		a.note("sent", "Sent "+what+" to "+d.Name, fmt.Sprintf("In %s · %s", where, sizeStr(total)), "")
 	}()
 	return tid
 }
@@ -445,14 +495,78 @@ func (a *app) sendNowList(tid, deviceID, folder, sub string, list []fileInfo) er
 		return err
 	}
 	defer c.Close()
+	a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.cancel = func() { c.Abort() } })
+	if a.wasCancelled(tid) { // cancelled while we were still connecting
+		return errors.New("cancelled")
+	}
 	paths := make([]string, len(list))
 	for i, f := range list {
 		paths[i] = f.Path
 	}
 	_, err = c.SendFiles(tid, folder, sub, paths, func(sent, total int64, i int) {
-		a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.Sent, t.Total, t.Name = sent, total, list[i].Name })
+		a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.Sent, t.Total, t.Name, t.Index = sent, total, list[i].Name, i+1 })
 	})
 	return err
+}
+
+// cancelTransfer stops a running transfer in either direction.
+func (a *app) cancelTransfer(id string) error {
+	a.mu.Lock()
+	var stop func()
+	for _, t := range a.transfers {
+		if t.ID == id && t.State == "running" {
+			stop = t.cancel
+		}
+	}
+	if a.cancelled == nil {
+		a.cancelled = map[string]bool{}
+	}
+	a.cancelled[id] = true
+	a.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	return nil
+}
+
+func (a *app) wasCancelled(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.cancelled[id]
+}
+
+// retryTransfer sends a failed or cancelled transfer again, as a new transfer.
+func (a *app) retryTransfer(id string) (string, error) {
+	a.mu.Lock()
+	var req *sendReq
+	for i, t := range a.transfers {
+		if t.ID == id && t.retry != nil {
+			req = t.retry
+			a.transfers = append(a.transfers[:i], a.transfers[i+1:]...) // the new attempt replaces it
+			break
+		}
+	}
+	a.mu.Unlock()
+	if req == nil {
+		return "", errors.New("nothing to retry")
+	}
+	req.List = a.checkedFiles(req.List)
+	if len(req.List) == 0 {
+		return "", errors.New("the files are no longer there")
+	}
+	return a.send(req.DeviceID, req.Folder, req.FolderLabel, req.Sub, req.List), nil
+}
+
+func (a *app) dismissTransfer(id string) {
+	a.mu.Lock()
+	for i, t := range a.transfers {
+		if t.ID == id && t.State != "running" {
+			a.transfers = append(a.transfers[:i], a.transfers[i+1:]...)
+			break
+		}
+	}
+	a.mu.Unlock()
+	a.hub.changed()
 }
 
 // ---------------------------------------------------------------- state for the window
@@ -497,7 +611,7 @@ func (a *app) stateJSON() []byte {
 	trs := make([]*transfer, 0, len(a.transfers))
 	for i := len(a.transfers) - 1; i >= 0; i-- {
 		t := a.transfers[i]
-		if t.State == "running" || time.Since(t.Updated) < 20*time.Second {
+		if t.State == "running" || time.Since(t.Updated) < 20*time.Second || (t.CanRetry && time.Since(t.Updated) < 30*time.Minute) {
 			trs = append(trs, t)
 		}
 	}
@@ -537,6 +651,21 @@ func sizeStr(n int64) string {
 		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", n)
+}
+
+// durStr: "0.4 s", "12 s", "2 min 5 s", "1 h 3 min".
+func durStr(d time.Duration) string {
+	switch {
+	case d < 100*time.Millisecond:
+		return "under 0.1 s"
+	case d < 10*time.Second:
+		return fmt.Sprintf("%.1f s", d.Seconds())
+	case d < time.Minute:
+		return fmt.Sprintf("%d s", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%d min %d s", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%d h %d min", int(d.Hours()), int(d.Minutes())%60)
 }
 
 func fileCount(n int) string {

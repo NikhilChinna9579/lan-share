@@ -145,6 +145,8 @@ async function step(name, fn) {
                    crypto.createHash("sha256").update(fs.readFileSync(big)).digest("hex");
       if (!same) throw new Error("file on the phone differs");
       await page.getByText(/Sent Holiday photos\.zip to Nikhil's phone/).first().waitFor();
+      // Time taken and speed are shown.
+      await page.getByText(/24\.0 MB in (under )?[\d.]+ s · [\d.]+ MB\/s/).first().waitFor();
     });
 
     await step("phone sends to the laptop; window shows it live", async () => {
@@ -153,9 +155,37 @@ async function step(name, fn) {
       // A second simulated phone process just for sending (same identity, different port).
       start("phone-send", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47822", "-send", f]);
       await page.getByText("Received Scan 2026-11-04.pdf").first().waitFor({ timeout: 15_000 });
+      await page.getByText(/6\.0 MB in (under )?[\d.]+ s/).first().waitFor();
       const got = path.join(laptopDownloads, "Scan 2026-11-04.pdf");
       await waitFor("file on the laptop", () => fs.existsSync(got) && fs.statSync(got).size === fs.statSync(f).size);
       await settle(); await page.screenshot({ path: path.join(out, "w08-received.png") });
+    });
+
+    await step("cancel a transfer midway, then retry it", async () => {
+      procs[1].kill("SIGKILL");
+      await sleep(300);
+      // A slow phone (4 MB/s) so there's time to press Cancel.
+      procs[1] = start("phone-slow", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47821", "-slow", "4"]);
+      const f = path.join(work, "Big video.mp4");
+      fs.writeFileSync(f, crypto.randomBytes(16 * 1024 * 1024));
+      await sleep(1500);
+      execFileSync(lanshare, ["-data", laptopData, "send", f], { env: { ...process.env, HOME: home }, timeout: 10_000 });
+      await page.locator('[data-act="root"]', { hasText: "Downloads" }).click();
+      await page.locator('[data-act="dosend"]').click();
+      await page.getByText(/Sending Big video\.mp4/).waitFor();
+      await page.getByText(/ · \d+\.\d s$/).first().waitFor(); // live timer
+      await settle(); await page.screenshot({ path: path.join(out, "w08b-sending-timer.png") });
+      await page.locator('[data-act="cancel"]').click();
+      await page.getByText(/Cancelled sending to Nikhil's phone/).waitFor();
+      const dest = path.join(phoneInbox, "Big video.mp4");
+      // The phone deletes the partial file as soon as it notices; allow it a moment.
+      await waitFor("partial file removed on the phone",
+        () => fs.readdirSync(phoneInbox).filter((n) => n.startsWith("Big video")).length === 0, 5_000);
+      await settle(); await page.screenshot({ path: path.join(out, "w08c-cancelled.png") });
+      await page.locator('[data-act="retry"]').click();
+      await page.getByText(/Sending Big video\.mp4/).waitFor();
+      await waitFor("retried file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 16 * 1024 * 1024, 20_000);
+      await page.getByText(/Sent Big video\.mp4 to Nikhil's phone/).first().waitFor();
     });
 
     await step("settings shows shared folders", async () => {
@@ -209,6 +239,18 @@ async function step(name, fn) {
       await page.locator("#settingsBtn").click();
       await page.getByRole("button", { name: "Quit LAN Share" }).click();
       await waitFor("process exit", () => procs[0].exitCode !== null, 5_000);
+    });
+
+    await step("history is still there after restarting", async () => {
+      fs.rmSync(path.join(out, "laptop.log"), { force: true });
+      procs[0] = start("laptop", lanshare, ["-data", laptopData, "-port", "47911", "-name", "DESKTOP-NIKHIL", "-no-window"]);
+      const url2 = await waitFor("UI address", () => {
+        const txt = fs.existsSync(path.join(out, "laptop.log")) ? fs.readFileSync(path.join(out, "laptop.log"), "utf8") : "";
+        const m = txt.match(/UI: (http\S+)/);
+        return m && m[1];
+      });
+      await page.goto(url2);
+      await page.getByText("Sent Holiday photos.zip to Nikhil's phone").first().waitFor();
     });
   } catch {
     if (page) await page.screenshot({ path: path.join(out, "failure.png") }).catch(() => {});

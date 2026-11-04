@@ -117,11 +117,37 @@ if until_ok 20 "screen_has 'Pictures'"; then
   SZ=$(stat -c %s "$HOME/Pictures/IMG_2041.jpg" 2>/dev/null)
   [ "$SZ" = "2097152" ] && pass "file arrived on the laptop intact size" || fail "file size on laptop: '$SZ'"
   sleep 1; shot 08-sent-from-phone
+  until_ok 10 "screen_has '2.0 MB in '" && pass "phone shows the time taken" || fail "phone shows the time taken"
 else
   fail "folder sheet listed the laptop's Pictures"
 fi
 
 bail_if_crashed "sending"
+
+# ---------------------------------------------------------------- 4b. cancel midway, then retry
+hook demo.txt send_big; app 10
+if until_ok 30 "screen_has 'Pictures'"; then
+  tap_text "Downloads"; sleep 3
+  tap_text "Save here"
+  if until_ok 20 "screen_has 'Sending Big video.mp4'"; then
+    sleep 2; shot 08b-sending-timer
+    tap_text "Cancel"
+    until_ok 15 "screen_has 'Cancelled sending'" && pass "cancel stops the transfer" || fail "cancel stops the transfer"
+    shot 08c-cancelled
+    until_ok 10 "! ls '$HOME/Downloads' | grep -q 'Big video'" && pass "cancel leaves nothing on the laptop" \
+      || fail "cancel leaves nothing on the laptop ($(ls "$HOME/Downloads" | tr '\n' ' '))"
+    tap_text "Retry"
+    until_ok 90 "[ \"\$(stat -c %s '$HOME/Downloads/Big video.mp4' 2>/dev/null)\" = 209715200 ]" \
+      && pass "retry sends it again, intact size" || fail "retry sends it again"
+  else
+    fail "big transfer started"
+  fi
+else
+  fail "folder sheet for the big file"
+fi
+bail_if_crashed "cancel/retry"
+app 6
+until_ok 10 "screen_has 'Received Quarterly report.pdf'" && pass "history survives an app restart" || fail "history survives an app restart"
 # ---------------------------------------------------------------- 5. screens with test data
 hook demo.txt add_offline; app 10; shot 09-devices-light
 night yes; app 10; shot 09-devices-dark; night no

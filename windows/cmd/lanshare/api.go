@@ -253,6 +253,29 @@ func serveAPI(a *app, ln net.Listener) {
 		a.mu.Unlock()
 		return map[string]string{"id": a.send(in.Device, in.Folder, in.FolderLabel, in.Path, in.Files)}, nil
 	})
+	h("/api/cancel", func(r *http.Request) (any, error) {
+		var in struct{ ID string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		return nil, a.cancelTransfer(in.ID)
+	})
+	h("/api/retry", func(r *http.Request) (any, error) {
+		var in struct{ ID string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		id, err := a.retryTransfer(in.ID)
+		return map[string]string{"id": id}, err
+	})
+	h("/api/dismiss", func(r *http.Request) (any, error) {
+		var in struct{ ID string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		a.dismissTransfer(in.ID)
+		return nil, nil
+	})
 	// Testing: send to the only online phone and wait for the result.
 	h("/api/send-now", func(r *http.Request) (any, error) {
 		var in struct {
