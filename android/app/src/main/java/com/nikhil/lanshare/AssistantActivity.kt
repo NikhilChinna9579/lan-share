@@ -444,6 +444,7 @@ class AssistantActivity : Activity() {
         val t = Hub.visibleTransfers().firstOrNull { it.started >= watchFrom - 100 } ?: return
         val verb = if (t.inbound) "Getting" else "Sending"
         when (t.state) {
+            Hub.State.ASKING -> say("Waiting for ${t.device}…", "")
             Hub.State.RUNNING -> {
                 say("$verb ${t.name}…", "${formatSize(t.sent)} of ${formatSize(t.total)}" + if (t.count > 1) " · file ${t.index} of ${t.count}" else "")
                 bar.visibility = View.VISIBLE

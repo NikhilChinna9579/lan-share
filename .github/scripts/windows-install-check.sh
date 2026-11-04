@@ -30,7 +30,8 @@ if until_ok 40 "[ ! -f '$INST' ]"; then pass "uninstall removed the program"; el
 fi
 [ ! -f "$LNK" ] && pass "uninstall removed the shortcut" || fail "uninstall removed the shortcut"
 reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Run' //v LanShare >/dev/null 2>&1 && fail "still starts with Windows" || pass "no longer starts with Windows"
-[ -f "$DATA/identity.pem" ] && pass "pairings kept" || fail "pairings kept"
+[ -f "$DATA/identity.dpapi" ] && pass "pairings kept" || fail "pairings kept"
+[ ! -f "$DATA/identity.pem" ] && pass "key kept encrypted (no plain key file)" || fail "a plain key file is on disk"
 taskkill //F //IM lanshare.exe >/dev/null 2>&1; taskkill //F //IM msedge.exe >/dev/null 2>&1
 echo "done: $FAILS failure(s)"
 exit $((FAILS > 0))

@@ -104,6 +104,9 @@ func (c *Conn) expect(v any, types ...string) error {
 	if typ == "error" {
 		var e protocol.Error
 		json.Unmarshal(raw, &e)
+		if e.Code == "not_allowed" {
+			return fmt.Errorf("%s doesn't allow browsing its files. Turn it on in LAN Share's settings there", c.PeerName)
+		}
 		return fmt.Errorf("device said: %s %s", e.Code, e.Message)
 	}
 	return fmt.Errorf("unexpected reply %q", typ)
@@ -178,9 +181,27 @@ type Progress func(sent, total int64, file int)
 
 // SendFiles streams local files into folderKey (and subfolder subPath) on the device and returns the saved names.
 func (c *Conn) SendFiles(transferID, folderKey, subPath string, paths []string, progress Progress) ([]string, error) {
+	items := make([]Item, len(paths))
+	for i, p := range paths {
+		items[i] = Item{Path: p}
+	}
+	return c.SendItems(transferID, folderKey, subPath, items, progress)
+}
+
+// Item is a file to send; Rel is its subfolder when it's part of a whole folder.
+type Item struct {
+	Path string
+	Rel  string // "/"-separated, e.g. "Holiday/Day 1"; "" for a loose file
+}
+
+// SendItems is SendFiles with subfolders: whole folders keep their layout.
+func (c *Conn) SendItems(transferID, folderKey, subPath string, items []Item, progress Progress) ([]string, error) {
 	offer := protocol.FileOffer{Type: "file_offer", TransferID: transferID, Folder: folderKey, Path: subPath}
 	var total int64
-	for _, p := range paths {
+	paths := make([]string, len(items))
+	for i, it := range items {
+		p := it.Path
+		paths[i] = p
 		st, err := os.Stat(p)
 		if err != nil {
 			return nil, err
@@ -188,7 +209,7 @@ func (c *Conn) SendFiles(transferID, folderKey, subPath string, paths []string, 
 		if st.IsDir() {
 			return nil, fmt.Errorf("%s is a folder; folders can't be sent yet", filepath.Base(p))
 		}
-		offer.Files = append(offer.Files, protocol.OfferFile{Name: filepath.Base(p), Size: st.Size()})
+		offer.Files = append(offer.Files, protocol.OfferFile{Name: filepath.Base(p), Size: st.Size(), Path: it.Rel})
 		total += st.Size()
 	}
 	if err := c.send(offer); err != nil {
@@ -204,6 +225,9 @@ func (c *Conn) SendFiles(transferID, folderKey, subPath string, paths []string, 
 	case "file_accept":
 	case "file_reject":
 		json.Unmarshal(raw, &reject)
+		if reject.Reason == "declined" {
+			return nil, fmt.Errorf("%s declined the files", c.PeerName)
+		}
 		return nil, fmt.Errorf("the device refused the files (%s)", reject.Reason)
 	default:
 		return nil, fmt.Errorf("unexpected reply %q", typ)
@@ -249,7 +273,11 @@ func (c *Conn) FetchFiles(transferID, folder, path string, names []string, saveD
 		return nil, err
 	}
 	dc := &deadlineConn{c.c}
-	saved, err := transfer.Receive(dc, dc, saveDir, clean, sizes, func(done, total int64, i int) {
+	dirs := make([]string, len(clean))
+	for i := range dirs {
+		dirs[i] = saveDir
+	}
+	saved, err := transfer.Receive(dc, dc, dirs, clean, sizes, func(done, total int64, i int) {
 		if progress != nil {
 			progress(done, total, i)
 		}
@@ -275,4 +303,14 @@ func (d *deadlineConn) Read(p []byte) (int, error) {
 func (d *deadlineConn) Write(p []byte) (int, error) {
 	d.c.SetDeadline(time.Now().Add(15 * time.Second))
 	return d.c.Write(p)
+}
+
+// Mkdir creates a subfolder in one of the device's shared folders and returns its name.
+func (c *Conn) Mkdir(folder, path, name string) (string, error) {
+	if err := c.send(protocol.MkdirRequest{Type: "mkdir_request", Folder: folder, Path: path, Name: name}); err != nil {
+		return "", err
+	}
+	var ok protocol.MkdirOK
+	err := c.expect(&ok, "mkdir_ok")
+	return ok.Name, err
 }

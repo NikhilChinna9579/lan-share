@@ -26,10 +26,11 @@ type Identity struct {
 	Fingerprint string
 }
 
-// LoadOrCreate reads identity.pem from dir, creating a new identity on first run.
+// LoadOrCreate loads this device's identity from dir, creating it on first run.
+// On Windows the private key is kept encrypted for the signed-in user (see store_windows.go).
 func LoadOrCreate(dir, name string) (*Identity, error) {
 	path := filepath.Join(dir, "identity.pem")
-	data, err := os.ReadFile(path)
+	data, err := load(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		data, err = create(name)
 		if err != nil {
@@ -38,8 +39,7 @@ func LoadOrCreate(dir, name string) (*Identity, error) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
-		// 0600: only the current user can read the private key.
-		if err := os.WriteFile(path, data, 0o600); err != nil {
+		if err := save(dir, data); err != nil {
 			return nil, err
 		}
 	} else if err != nil {

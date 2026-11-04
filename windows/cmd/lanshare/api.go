@@ -197,6 +197,13 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return statFiles(paths), nil
 	})
+	h("/api/pick/sendfolder", func(*http.Request) (any, error) {
+		p, err := pickFolder()
+		if err != nil {
+			return nil, err
+		}
+		return statFiles([]string{p}), nil
+	})
 	h("/api/pick/folder", func(*http.Request) (any, error) {
 		p, err := pickFolder()
 		return map[string]string{"path": p}, err
@@ -266,6 +273,63 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return map[string]string{"id": a.fetch(in.Device, in.Folder, in.FolderLabel, in.Path, in.Names)}, nil
 	})
+	h("/api/approve", func(r *http.Request) (any, error) {
+		var in struct {
+			ID string
+			OK bool
+		}
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		return nil, a.answer(in.ID, in.OK)
+	})
+	h("/api/settings", func(r *http.Request) (any, error) {
+		var in struct {
+			Name   *string
+			Ask    *bool
+			Browse *bool
+		}
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		if in.Name != nil {
+			if err := a.rename(*in.Name); err != nil {
+				return nil, err
+			}
+		}
+		a.mu.Lock()
+		if in.Ask != nil {
+			a.settings.Ask = *in.Ask
+		}
+		if in.Browse != nil {
+			a.settings.NoBrowse = !*in.Browse
+		}
+		a.mu.Unlock()
+		a.hub.changed()
+		return nil, a.saveSettings()
+	})
+	h("/api/folders/default", func(r *http.Request) (any, error) {
+		var in struct{ Key string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		err := a.folders.SetDefault(in.Key)
+		a.hub.changed()
+		return nil, err
+	})
+	h("/api/remote/mkdir", func(r *http.Request) (any, error) {
+		var in struct{ Device, Folder, Path, Name string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		c, _, err := a.dial(in.Device)
+		if err != nil {
+			return nil, err
+		}
+		defer c.Close()
+		name, err := c.Mkdir(in.Folder, in.Path, in.Name)
+		return map[string]string{"name": name}, err
+	})
 	h("/api/cancel", func(r *http.Request) (any, error) {
 		var in struct{ ID string }
 		if err := readJSON(r, &in); err != nil {
@@ -301,9 +365,10 @@ func serveAPI(a *app, ln net.Listener) {
 		for _, s := range a.tracker.Snapshot() {
 			if s.Status.String() == "online" {
 				tid := "test-" + fmt.Sprint(time.Now().UnixNano())
-				err := a.sendNowList(tid, s.ID, in.Folder, "", statFiles(in.Files))
+				list := statFiles(in.Files)
+				err := a.sendNowList(tid, s.ID, in.Folder, "", list)
 				if err == nil {
-					a.note("sent", "Sent "+fileCount(len(in.Files))+" to "+s.Name, "test", "")
+					a.note("sent", "Sent "+fileCount(len(list))+" to "+s.Name, "test", "")
 				}
 				return map[string]string{"sentTo": s.Name}, err
 			}
@@ -426,7 +491,7 @@ func (a *app) checkedFiles(in []fileInfo) []fileInfo {
 		if err != nil || st.IsDir() {
 			continue
 		}
-		out = append(out, fileInfo{Path: f.Path, Name: filepath.Base(f.Path), Size: st.Size(), Temp: strings.HasPrefix(f.Path, outbox)})
+		out = append(out, fileInfo{Path: f.Path, Name: filepath.Base(f.Path), Size: st.Size(), Rel: f.Rel, Temp: strings.HasPrefix(f.Path, outbox)})
 	}
 	return out
 }
@@ -444,16 +509,48 @@ func (a *app) insideShared(p string) bool {
 	return false
 }
 
+// statFiles turns paths into files to send. A folder becomes all the files inside it
+// (hidden and system files skipped), each remembering its subfolder, so the folder
+// arrives with the same layout.
 func statFiles(paths []string) []fileInfo {
 	out := []fileInfo{}
 	for _, p := range paths {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			out = append(out, fileInfo{Path: p, Name: filepath.Base(p), Size: st.Size()})
+		st, err := os.Stat(p)
+		if err != nil {
+			continue
 		}
+		if !st.IsDir() {
+			out = append(out, fileInfo{Path: p, Name: filepath.Base(p), Size: st.Size()})
+			continue
+		}
+		parent := filepath.Dir(p)
+		filepath.WalkDir(p, func(path string, d os.DirEntry, err error) error {
+			if err != nil || len(out) >= maxFolderFiles {
+				return filepath.SkipDir
+			}
+			if path != p && files.IsHidden(filepath.Dir(path), d.Name()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			rel, _ := filepath.Rel(parent, filepath.Dir(path))
+			out = append(out, fileInfo{Path: path, Name: d.Name(), Size: info.Size(), Rel: filepath.ToSlash(rel)})
+			return nil
+		})
 	}
 	return out
 }
 
+const maxFolderFiles = 10000
+
 func readJSON(r *http.Request, v any) error {
-	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
+	return json.NewDecoder(io.LimitReader(r.Body, 32<<20)).Decode(v) // big enough for a folder of 10 000 files
 }

@@ -45,6 +45,10 @@ type FoldersResponse struct {
 type OfferFile struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
+	// Path (optional) is a subfolder for this file inside the offer's folder/path,
+	// "/"-separated: used when a whole folder is sent ("Holiday/Day 1"). The receiver
+	// creates it, cleaning every part the same way as file names.
+	Path string `json:"path,omitempty"`
 }
 
 type FileOffer struct {
@@ -117,4 +121,17 @@ type FetchRequest struct {
 	Folder     string   `json:"folder"`
 	Path       string   `json:"path,omitempty"`
 	Files      []string `json:"files"`
+}
+
+// MkdirRequest creates a subfolder inside a shared folder (from a save-location picker).
+type MkdirRequest struct {
+	Type   string `json:"type"` // "mkdir_request"
+	Folder string `json:"folder"`
+	Path   string `json:"path,omitempty"`
+	Name   string `json:"name"`
+}
+
+type MkdirOK struct {
+	Type string `json:"type"` // "mkdir_ok"
+	Name string `json:"name"` // the name actually created (cleaned)
 }

@@ -69,17 +69,15 @@ type Saved struct {
 	Took  time.Duration
 }
 
-// Receive reads the files of an offer into dir. Bytes are read from src (which may
+// Receive reads the files of an offer, file i into dirs[i] (a whole folder being
+// received has its files in several subfolders). Bytes are read from src (which may
 // be rw slowed down, for tests); frames from rw. Files are written as name.part and
 // renamed only when their checksum matches; on any failure the .part files are
 // deleted. names must already be sanitized.
-func Receive(rw io.ReadWriter, src io.Reader, dir string, names []string, sizes []int64,
+func Receive(rw io.ReadWriter, src io.Reader, dirs []string, names []string, sizes []int64,
 	progress func(done, total int64, idx int), saved func(Saved)) ([]string, error) {
 	if src == nil {
 		src = rw
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
 	}
 	var parts []string
 	defer func() {
@@ -94,6 +92,10 @@ func Receive(rw io.ReadWriter, src io.Reader, dir string, names []string, sizes 
 	out := make([]string, 0, len(names))
 	for i, name := range names {
 		start := time.Now()
+		dir := dirs[i]
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
 		part := files.UniquePath(dir, name+".part")
 		f, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {

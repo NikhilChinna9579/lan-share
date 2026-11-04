@@ -2,6 +2,7 @@ package com.nikhil.lanshare
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import org.json.JSONArray
 import org.json.JSONObject
@@ -16,7 +17,7 @@ object Client {
     data class Folder(val key: String, val label: String)
 
     /** A file ready to send: display name, exact size, and how to read it. */
-    class Outgoing(val name: String, val size: Long, val open: () -> InputStream)
+    class Outgoing(val name: String, val size: Long, val dir: String = "", val open: () -> InputStream)
 
     /**
      * Pairs using the scanned QR text (PROTOCOL.md §5, Pairing). Blocking.
@@ -108,6 +109,44 @@ object Client {
             saved
         }
 
+    /** Makes a subfolder on the laptop (the "New folder" button); returns its name. */
+    fun mkdir(device: Device, myName: String, folderKey: String, path: String, name: String): String =
+        PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            conn.send(JSONObject().put("type", "mkdir_request").put("folder", folderKey).put("path", path).put("name", name))
+            val r = conn.receive()
+            if (r.optString("type") != "mkdir_ok") throw IllegalStateException(r.optString("message").ifEmpty { "Couldn't make that folder." })
+            r.optString("name", name)
+        }
+
+    /** Every file inside a folder picked with the folder picker, keeping subfolders. */
+    fun resolveTree(ctx: Context, tree: Uri): List<Outgoing> {
+        val out = mutableListOf<Outgoing>()
+        val cr = ctx.contentResolver
+        val cols = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE)
+        fun walk(docId: String, rel: String) {
+            cr.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId), cols, null, null, null)?.use { c ->
+                while (c.moveToNext() && out.size < 10_000) {
+                    val id = c.getString(0)
+                    val name = c.getString(1) ?: continue
+                    if (name.startsWith(".")) continue
+                    if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) walk(id, "$rel/$name")
+                    else {
+                        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                        out += Outgoing(name, if (c.isNull(3)) 0 else c.getLong(3), rel) {
+                            cr.openInputStream(uri) ?: error("Can't open $name")
+                        }
+                    }
+                }
+            }
+        }
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        val top = cr.query(DocumentsContract.buildDocumentUriUsingTree(tree, rootId), arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "Folder"
+        walk(rootId, top)
+        return out
+    }
+
     fun folders(device: Device, myName: String): Pair<String, List<Folder>> =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
             conn.send(JSONObject().put("type", "folders_request"))
@@ -129,12 +168,19 @@ object Client {
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
             onConnected(conn)
             val files = JSONArray()
-            items.forEach { files.put(JSONObject().put("name", it.name).put("size", it.size)) }
+            items.forEach { o ->
+                val f = JSONObject().put("name", o.name).put("size", o.size)
+                if (o.dir.isNotEmpty()) f.put("path", o.dir) // part of a whole folder
+                files.put(f)
+            }
             conn.send(JSONObject().put("type", "file_offer").put("transfer_id", UUID.randomUUID().toString())
                 .put("folder", folderKey).put("path", path).put("files", files))
+            conn.readTimeout(65_000) // the laptop may be asking its user first
             val answer = conn.expect("file_accept", "file_reject")
+            conn.readTimeout(15_000)
             if (answer.getString("type") == "file_reject") {
-                throw IllegalStateException("${device.name} refused the files (${answer.optString("reason")}).")
+                throw IllegalStateException(if (answer.optString("reason") == "declined") "${device.name} declined the files."
+                    else "${device.name} refused the files (${answer.optString("reason")}).")
             }
             Transfer.stream(conn, items, progress)
             val saved = conn.expect("transfer_done").getJSONArray("saved")

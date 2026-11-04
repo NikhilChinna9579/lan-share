@@ -62,6 +62,9 @@ class PeerConnection(private val socket: SSLSocket) : Closeable {
 
     override fun close() = socket.close()
 
+    /** How long a read may wait (e.g. longer while the other side asks its user). */
+    fun readTimeout(ms: Int) { socket.soTimeout = ms }
+
     /** Cuts the connection at once (Cancel): data in flight is dropped, the other side stops. */
     fun abort() {
         runCatching { socket.setSoLinger(true, 0) }

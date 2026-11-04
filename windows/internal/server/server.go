@@ -13,7 +13,6 @@ import (
 	"io"
 	"math/big"
 	"net"
-	"os"
 	"sync"
 	"time"
 
@@ -73,6 +72,12 @@ type Server struct {
 	ReportReach *bool
 	// Throttle (testing) limits how fast files are received, in bytes per second.
 	Throttle int64
+	// AllowBrowse, if set and returning false, refuses listing and fetching files
+	// (a paired device can still send here).
+	AllowBrowse func() bool
+	// Approve, if set, is asked before accepting files and may block until the person
+	// answers (the sender waits up to a minute). false declines them.
+	Approve func(peerID, from string, offer protocol.FileOffer) bool
 
 	mu         sync.Mutex
 	pairCode   string
@@ -220,7 +225,20 @@ func (s *Server) handle(c *tls.Conn) {
 		case "list_request":
 			var req protocol.ListRequest
 			json.Unmarshal(raw, &req)
+			if !s.browsable() {
+				err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "not_allowed", Message: "browsing is turned off on " + s.Name})
+				break
+			}
 			err = s.sendList(conn, req)
+		case "mkdir_request":
+			var req protocol.MkdirRequest
+			json.Unmarshal(raw, &req)
+			name, merr := s.Folders.Mkdir(req.Folder, req.Path, req.Name)
+			if merr != nil {
+				err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "bad_folder", Message: merr.Error()})
+			} else {
+				err = protocol.WriteFrame(conn, protocol.MkdirOK{Type: "mkdir_ok", Name: name})
+			}
 		case "file_offer":
 			var offer protocol.FileOffer
 			if json.Unmarshal(raw, &offer) != nil {
@@ -237,6 +255,10 @@ func (s *Server) handle(c *tls.Conn) {
 			var req protocol.FetchRequest
 			if json.Unmarshal(raw, &req) != nil {
 				return
+			}
+			if !s.browsable() {
+				err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "not_allowed", Message: "browsing is turned off on " + s.Name})
+				break
 			}
 			s.track(req.TransferID, c)
 			err = s.serveFetch(conn, peerID, peer.Name, req)
@@ -355,8 +377,14 @@ func (s *Server) receive(conn io.ReadWriter, peerID, from string, offer protocol
 		}
 		names[i], sizes[i] = n, f.Size
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return reject("bad_folder")
+	if s.Approve != nil && !s.Approve(peerID, from, offer) {
+		return reject("declined")
+	}
+	dirs := make([]string, len(offer.Files))
+	for i, f := range offer.Files {
+		if dirs[i], err = files.SubDir(dir, f.Path); err != nil {
+			return reject("bad_name")
+		}
 	}
 	if err := protocol.WriteFrame(conn, protocol.FileAccept{Type: "file_accept", TransferID: offer.TransferID}); err != nil {
 		return err
@@ -365,7 +393,7 @@ func (s *Server) receive(conn io.ReadWriter, peerID, from string, offer protocol
 	if s.Throttle > 0 {
 		src = &slowReader{r: conn, rate: s.Throttle}
 	}
-	saved, err := transfer.Receive(conn, src, dir, names, sizes,
+	saved, err := transfer.Receive(conn, src, dirs, names, sizes,
 		func(done, total int64, i int) {
 			s.emit(Event{Kind: EventProgress, DeviceID: peerID, Device: from, Transfer: offer.TransferID,
 				Name: names[i], Bytes: done, Total: total, Index: i, Count: len(names)})
@@ -435,6 +463,8 @@ func (s *Server) serveFetch(conn io.ReadWriter, peerID, from string, req protoco
 		Name: req.Files[0], Bytes: total, Count: len(paths), Duration: time.Since(start), Done: true})
 	return nil
 }
+
+func (s *Server) browsable() bool { return s.AllowBrowse == nil || s.AllowBrowse() }
 
 func (s *Server) emit(e Event) {
 	if s.OnEvent != nil {

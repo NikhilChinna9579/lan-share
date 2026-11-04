@@ -40,7 +40,8 @@ import javax.net.ssl.SSLException
 class MainActivity : Activity() {
     private val worker = Executors.newCachedThreadPool()
     private val main = Handler(Looper.getMainLooper())
-    private val myName by lazy { deviceName(this) }
+    private val myName get() = deviceName(this)
+    private val myNameNow get() = deviceName(this)
     private lateinit var presence: Presence
 
     private lateinit var receiveDot: View
@@ -211,7 +212,20 @@ class MainActivity : Activity() {
             val dir = if (t.inbound) "From" else "To"
             action.visibility = View.GONE
             dismiss.visibility = View.GONE
+            dismiss.contentDescription = "Dismiss"
             when (t.state) {
+                Hub.State.ASKING -> {
+                    badge(icon, R.drawable.ic_download, R.color.primary_container, R.color.on_primary_container)
+                    title.text = "${t.device} wants to send ${t.name}"
+                    sub.text = "${formatSize(t.total)} · into ${t.folder} · tap Accept, or ✕ to decline"
+                    bar.visibility = View.GONE
+                    action.visibility = View.VISIBLE
+                    action.text = "Accept"
+                    action.setOnClickListener { t.accept?.invoke() }
+                    dismiss.visibility = View.VISIBLE
+                    dismiss.contentDescription = "Decline"
+                    dismiss.setOnClickListener { t.cancel?.invoke() }
+                }
                 Hub.State.RUNNING -> {
                     badge(icon, if (t.inbound) R.drawable.ic_download else R.drawable.ic_upload, R.color.primary_container, R.color.on_primary_container)
                     title.text = (if (t.inbound) "Receiving " else "Sending ") + t.name.ifEmpty { "…" }
@@ -340,7 +354,7 @@ class MainActivity : Activity() {
         }
         val tap = {
             when (s.state) {
-                Presence.State.ONLINE -> pickFiles(d)
+                Presence.State.ONLINE -> sendWhat(d)
                 Presence.State.ONE_WAY -> showOneWay(d)
                 else -> showCard(Kind.ERROR, "${d.name} is offline",
                     "Open LAN Share on it, and check both are on the same Wi-Fi.", device = d.id)
@@ -469,6 +483,34 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_TREE)
         })
+        // This phone.
+        sheet.add(Sheet.Row(R.drawable.ic_phone, "Name: $myNameNow", sub = "What your laptops call this phone · tap to change", dismiss = false) {
+            val input = android.widget.EditText(this).apply { setText(myNameNow); setSingleLine(); selectAll() }
+            val box = android.widget.FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
+            android.app.AlertDialog.Builder(this).setTitle("Rename this phone").setView(box)
+                .setPositiveButton("Save") { _, _ ->
+                    val n = input.text.toString().trim()
+                    if (n.isNotEmpty()) {
+                        Prefs.setName(this, n)
+                        Hub.add("info", "Renamed this phone to $n", "Laptops see the new name from now on")
+                        ReceiveService.restart(this) // announce the new name on the Wi-Fi
+                        fillSharedFolders(sheet)
+                    }
+                }
+                .setNegativeButton("Cancel", null).show()
+        })
+        val ask = Approvals.enabled(this)
+        sheet.add(Sheet.Row(R.drawable.ic_download, "Ask before receiving files",
+            sub = if (ask) "You accept or decline each time" else "Paired laptops' files are saved straight away",
+            trail = if (ask) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+            Approvals.setEnabled(this, !ask); fillSharedFolders(sheet)
+        })
+        val browse = Prefs.allowBrowse(this)
+        sheet.add(Sheet.Row(R.drawable.ic_folder, "Let laptops browse and get files",
+            sub = if (browse) "Paired laptops can see and get files in these folders" else "Laptops can only send to this phone",
+            trail = if (browse) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+            Prefs.setAllowBrowse(this, !browse); fillSharedFolders(sheet)
+        })
         // The floating bubble opens the assistant from any app.
         val bubbleOn = Bubble.enabled(this) && android.provider.Settings.canDrawOverlays(this)
         sheet.add(Sheet.Row(R.drawable.ic_mic, "Floating assistant bubble",
@@ -509,6 +551,18 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------ sending
 
+    /** Files, or a whole folder? */
+    private fun sendWhat(d: Device) {
+        val sheet = Sheet(this, "Send to ${d.name}", null)
+        sheet.add(Sheet.Row(R.drawable.ic_file, "Choose files", sub = "One or more") { pickFiles(d) })
+        sheet.add(Sheet.Row(R.drawable.ic_folder, "Send a whole folder", sub = "With its subfolders") {
+            pickTarget = d
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_SEND_TREE)
+        })
+        sheet.show()
+    }
+
     private fun pickFiles(target: Device) {
         pickTarget = target
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -535,6 +589,19 @@ class MainActivity : Activity() {
             return
         }
         val target = pickTarget ?: return
+        if (requestCode == REQUEST_SEND_TREE) {
+            val tree = data.data ?: return
+            showCard(Kind.WORKING, "Reading the folder…", "")
+            worker.execute {
+                val items = runCatching { Client.resolveTree(this, tree) }.getOrElse { emptyList() }
+                ui {
+                    hideCard.run()
+                    if (items.isEmpty()) showCard(Kind.ERROR, "That folder is empty", "Or Android didn't let LAN Share read it.")
+                    else chooseDest(target, items)
+                }
+            }
+            return
+        }
         if (requestCode != REQUEST_PICK) return
         val uris = mutableListOf<Uri>()
         data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris += clip.getItemAt(i).uri }
@@ -582,8 +649,17 @@ class MainActivity : Activity() {
                 ui { showCard(Kind.ERROR, "Couldn't read that file", it.message ?: "") }
                 return@execute
             }
-            ui {
-                val sheet = Sheet(this, "Save on ${d.name}", "${plural(items.size, "file")} · ${formatSize(items.sumOf { it.size })}")
+            ui { chooseDest(d, items) }
+        }
+    }
+
+    /** Where to save the files on the laptop: its shared folders and their subfolders. */
+    private fun chooseDest(d: Device, items: List<Client.Outgoing>) {
+        run {
+            run { // (kept as a block: this was inside chooseFolder before)
+                val top = items.map { it.dir.substringBefore('/') }.toSet().singleOrNull()?.takeIf { it.isNotEmpty() }
+                val sheet = Sheet(this, "Save on ${d.name}", (if (top != null) "Folder $top · " else "") +
+                    "${plural(items.size, "file")} · ${formatSize(items.sumOf { it.size })}")
                 sheet.message("Asking ${d.name} for its folders…")
                 sheet.show()
                 worker.execute {
@@ -629,7 +705,19 @@ class MainActivity : Activity() {
                 sheet.clear()
                 val dirs = r.getOrElse { emptyList() }
                 if (r.isFailure) sheet.message("Couldn't list this folder: ${friendly(r.exceptionOrNull()!!, d)}")
-                else if (dirs.isEmpty()) sheet.message("No subfolders here.")
+                else sheet.add(Sheet.Row(R.drawable.ic_add, "New folder…", dismiss = false) {
+                    newFolder(d) { name ->
+                        worker.execute {
+                            val made = runCatching { Client.mkdir(DeviceStore.get(this, d.id) ?: d, myName, folder.key, path.joinToString("/"), name) }
+                            Log.i(TAG, "mkdir $name on ${d.name}: " + made.getOrElse { "failed: $it" })
+                            ui {
+                                made.onSuccess { browse(sheet, d, items, defaultKey, roots, folder, path + it) }
+                                    .onFailure { showCard(Kind.ERROR, "Couldn't make that folder", friendly(it, d)) }
+                            }
+                        }
+                    }
+                })
+                if (r.isSuccess && dirs.isEmpty()) sheet.message("No subfolders here.")
                 dirs.forEach { name ->
                     sheet.add(Sheet.Row(R.drawable.ic_folder, name, trail = Sheet.Trail.CHEVRON, dismiss = false) {
                         browse(sheet, d, items, defaultKey, roots, folder, path + name)
@@ -641,6 +729,20 @@ class MainActivity : Activity() {
 
     private fun send(d: Device, folder: Client.Folder, path: String, where: String, items: List<Client.Outgoing>) =
         Actions.send(this, d, folder, path, where, items) { friendly(it, d) }
+
+    private fun newFolder(d: Device, then: (String) -> Unit) {
+        val input = android.widget.EditText(this).apply { hint = "Folder name"; setSingleLine() }
+        val box = android.widget.FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("New folder on ${d.name}")
+            .setView(box)
+            .setPositiveButton("Create") { _, _ -> input.text.toString().trim().takeIf { it.isNotEmpty() }?.let(then) }
+            .setNegativeButton("Cancel", null)
+            .show()
+        input.requestFocus()
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     // ------------------------------------------------------------------ getting files from a laptop
 
@@ -769,6 +871,18 @@ class MainActivity : Activity() {
                 "receiving" -> Hub.transfer("demo-in", true, d.name) { it.name = "Quarterly report.pdf"; it.total = 9_000_000; it.sent = 2_700_000 }
                 "error" -> showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(ConnectException(), d), device = d.id)
                 "folders" -> showSharedFolders(firstTime = true)
+                "ask_on" -> Approvals.setEnabled(this, true)
+                "ask_off" -> Approvals.setEnabled(this, false)
+                "browse_off" -> Prefs.setAllowBrowse(this, false)
+                "browse_on" -> Prefs.setAllowBrowse(this, true)
+                "send_folder" -> {
+                    // A folder "Trip" with a subfolder, as if picked with "Send a whole folder".
+                    val items = listOf("Trip" to "a.jpg", "Trip" to "b.jpg", "Trip/Day 2" to "c.jpg").map { (dir, name) ->
+                        val f = File(cacheDir, name).apply { writeBytes(ByteArray(100_000) { (it % 7).toByte() }) }
+                        Client.Outgoing(name, f.length(), dir) { f.inputStream() }
+                    }
+                    chooseDest(d, items)
+                }
                 "bubble" -> { Bubble.setEnabled(this, true); ReceiveService.start(this) }
                 "assistant" -> {
                     // "this file" = a file just shared into LAN Share; then the sentence a person would say.
@@ -811,5 +925,6 @@ class MainActivity : Activity() {
         private const val REQUEST_NOTIFY = 2
         private const val REQUEST_TREE = 3
         private const val REQUEST_MEDIA = 4
+        private const val REQUEST_SEND_TREE = 6
     }
 }

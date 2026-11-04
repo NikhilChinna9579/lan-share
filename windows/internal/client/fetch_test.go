@@ -6,12 +6,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/NikhilChinna9579/lan-share/windows/internal/files"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/identity"
+	"github.com/NikhilChinna9579/lan-share/windows/internal/protocol"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/server"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/trust"
 )
@@ -85,4 +87,96 @@ func TestFetchFromDevice(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(save, "outside.txt")); err == nil {
 		t.Fatal("outside file leaked")
 	}
+}
+
+func TestFolderMkdirDeclineAndBrowseOff(t *testing.T) {
+	dir := t.TempDir()
+	laptop, _ := identity.LoadOrCreate(filepath.Join(dir, "laptop"), "Laptop")
+	phone, _ := identity.LoadOrCreate(filepath.Join(dir, "phone"), "Phone")
+	ts, _ := trust.Open(filepath.Join(dir, "phone"))
+	ts.Add(trust.Device{ID: laptop.Fingerprint, Name: "Laptop"})
+	inbox := filepath.Join(dir, "inbox")
+	os.MkdirAll(inbox, 0o755)
+	folders := files.NewFolders("d")
+	folders.Add("d", "Downloads", inbox)
+	var allow, browse atomic.Bool
+	allow.Store(true)
+	browse.Store(true)
+	srv := &server.Server{Name: "Phone", Identity: phone, Trust: ts, Folders: folders,
+		AllowBrowse: browse.Load,
+		Approve:     func(_, _ string, _ protocol.FileOffer) bool { return allow.Load() }}
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer ln.Close()
+	go srv.Serve(ln)
+	dial := func() *Conn {
+		c, err := Dial(ln.Addr().String(), phone.Fingerprint, laptop, "Laptop", 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	// A whole folder keeps its layout; sneaky subfolder names can't escape.
+	src := filepath.Join(dir, "a.txt")
+	os.WriteFile(src, []byte("hello"), 0o600)
+	c := dial()
+	_, err := c.SendItems("t1", "d", "", []Item{{src, "Trip"}, {src, "Trip/Day 1"}}, nil)
+	c.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = dial()
+	if _, err := c.SendItems("t1b", "d", "", []Item{{src, "../../evil"}}, nil); err == nil {
+		t.Fatal("a path climbing out was accepted")
+	}
+	c.Close()
+	for _, p := range []string{"Trip/a.txt", "Trip/Day 1/a.txt"} {
+		if _, err := os.Stat(filepath.Join(inbox, p)); err != nil {
+			t.Fatalf("missing %s", p)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "evil")); err == nil {
+		t.Fatal("escaped the shared folder")
+	}
+
+	// New folder from the picker.
+	c = dial()
+	name, err := c.Mkdir("d", "Trip", "Day 2")
+	c.Close()
+	if err != nil || name != "Day 2" {
+		t.Fatalf("mkdir %q %v", name, err)
+	}
+	if st, err := os.Stat(filepath.Join(inbox, "Trip", "Day 2")); err != nil || !st.IsDir() {
+		t.Fatal("folder not made")
+	}
+	c = dial()
+	if _, err := c.Mkdir("d", "../..", "x"); err == nil {
+		t.Fatal("mkdir outside the shared folder")
+	}
+	c.Close()
+
+	// Declined: nothing saved, a clear message.
+	allow.Store(false)
+	c = dial()
+	_, err = c.SendFiles("t2", "d", "", []string{src}, nil)
+	c.Close()
+	if err == nil || !strings.Contains(err.Error(), "declined") {
+		t.Fatalf("decline: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inbox, "a.txt")); err == nil {
+		t.Fatal("declined file was saved")
+	}
+
+	// Browsing turned off: no listing, no fetching.
+	browse.Store(false)
+	c = dial()
+	if _, err := c.List("d", ""); err == nil || !strings.Contains(err.Error(), "doesn't allow browsing") {
+		t.Fatalf("list with browsing off: %v", err)
+	}
+	c.Close()
+	c = dial()
+	if _, err := c.FetchFiles("f", "d", "Trip", []string{"a.txt"}, filepath.Join(dir, "got"), nil); err == nil {
+		t.Fatal("fetched with browsing off")
+	}
+	c.Close()
 }

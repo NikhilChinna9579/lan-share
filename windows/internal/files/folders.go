@@ -254,3 +254,52 @@ func (f *Folders) save() error {
 // IsHidden says whether a file should stay out of listings and fetches
 // (dot-files; on Windows also hidden and system files).
 func IsHidden(dir, name string) bool { return isHidden(dir, name) }
+
+// SetDefault chooses the folder files are saved into when nothing else is said.
+func (f *Folders) SetDefault(key string) error {
+	if _, ok := f.Path(key); !ok {
+		return ErrBadPath
+	}
+	f.mu.Lock()
+	f.Default = key
+	f.mu.Unlock()
+	return f.save()
+}
+
+// Mkdir creates a subfolder named name inside (key, rel). It's fine if it exists.
+func (f *Folders) Mkdir(key, rel, name string) (string, error) {
+	dir, err := f.Resolve(key, rel)
+	if err != nil {
+		return "", err
+	}
+	clean, err := SanitizeName(name)
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, clean)
+	if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		return "", fmt.Errorf("a file called %s is already there", clean)
+	}
+	return clean, os.MkdirAll(p, 0o755)
+}
+
+// SubDir makes (and returns) the subfolder rel inside base, for a file that is part
+// of a whole folder being received. Every part is cleaned like a file name, so it
+// can't climb out of base.
+func SubDir(base, rel string) (string, error) {
+	dir := base
+	for _, part := range strings.Split(strings.ReplaceAll(rel, `\`, "/"), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		clean, err := SanitizeName(part)
+		if err != nil || clean == ".." {
+			return "", ErrBadPath
+		}
+		dir = filepath.Join(dir, clean)
+	}
+	if dir == base {
+		return base, nil
+	}
+	return dir, os.MkdirAll(dir, 0o755)
+}

@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * The screen listens and redraws as things change, so status is always live.
  */
 object Hub {
-    enum class State { RUNNING, DONE, ERROR, CANCELLED }
+    enum class State { ASKING, RUNNING, DONE, ERROR, CANCELLED } // ASKING: waiting for Accept/Decline
 
     class Transfer(
         val id: String, val inbound: Boolean, val device: String,
@@ -19,11 +19,12 @@ object Hub {
         @Volatile var files: Int = 0, @Volatile var state: State = State.RUNNING,
         @Volatile var message: String = "", @Volatile var folder: String = "",
         @Volatile var index: Int = 1, @Volatile var count: Int = 1,
-        val started: Long = System.currentTimeMillis(), @Volatile var updated: Long = System.currentTimeMillis(),
+        @Volatile var started: Long = System.currentTimeMillis(), @Volatile var updated: Long = System.currentTimeMillis(),
         @Volatile var elapsed: Long = 0,            // ms, set when it ends
         @Volatile var cancel: (() -> Unit)? = null, // stops it while running
         @Volatile var retry: (() -> Unit)? = null,  // sends it again (outgoing only)
         @Volatile var cancelled: Boolean = false,
+        @Volatile var accept: (() -> Unit)? = null, // ASKING: take the files
     ) {
         val speed get() = if (state == State.DONE && elapsed > 0) total * 1000 / elapsed
             else sent * 1000 / maxOf(System.currentTimeMillis() - started, 1)
@@ -62,7 +63,7 @@ object Hub {
         if (isNew) android.util.Log.i("LanShare", "transfer ${if (inbound) "in" else "out"} started: ${t.name} (${t.count} files) ${if (inbound) "from" else "to"} $device")
         if (t.state != before) android.util.Log.i("LanShare", "transfer ${if (inbound) "in" else "out"} ${t.state}: ${t.name} ${t.message}")
         t.updated = System.currentTimeMillis()
-        if (t.state != State.RUNNING && t.elapsed == 0L) t.elapsed = t.updated - t.started
+        if (t.state in setOf(State.DONE, State.ERROR, State.CANCELLED) && t.elapsed == 0L) t.elapsed = t.updated - t.started
         while (transfers.size > 6) transfers.remove(transfers.keys.first())
         changed()
     }
@@ -72,7 +73,7 @@ object Hub {
     fun visibleTransfers(): List<Transfer> {
         val now = System.currentTimeMillis()
         return transfers.values.filter {
-            it.state == State.RUNNING || now - it.updated < 8_000 ||
+            it.state == State.RUNNING || it.state == State.ASKING || now - it.updated < 8_000 ||
                 (it.state != State.DONE && it.retry != null && now - it.updated < 30 * 60_000)
         }.reversed()
     }

@@ -117,6 +117,9 @@ class ReceiveService : Service() {
 
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, ReceiveService::class.java))
 
+        /** Starts over, e.g. to announce a new name on the Wi-Fi. */
+        fun restart(ctx: Context) { stop(ctx); start(ctx) }
+
         /** "Received …" notification; tapping opens the file (or Downloads for several). */
         fun notifyReceived(ctx: Context, r: PhoneServer.Received) {
             if (r.files.isEmpty()) return
@@ -144,5 +147,5 @@ class ReceiveService : Service() {
 }
 
 /** The phone's name as set in Settings, else its model. */
-fun deviceName(ctx: Context): String =
+fun deviceName(ctx: Context): String = Prefs.name(ctx) ?:
     Settings.Global.getString(ctx.contentResolver, Settings.Global.DEVICE_NAME)?.takeIf { it.isNotBlank() } ?: Build.MODEL

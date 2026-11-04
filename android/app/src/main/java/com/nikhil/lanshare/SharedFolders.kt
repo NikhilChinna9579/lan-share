@@ -112,6 +112,12 @@ object SharedFolders {
                 if (rel.equals(dir, ignoreCase = true)) files += Triple(name, size, modified)
                 else rel.substring(dir.length).substringBefore('/').takeIf { it.isNotEmpty() && !it.startsWith(".") }?.let { dirs += it }
             }
+            // Folders on disk (also empty ones), and ones just made that are waiting for a file.
+            @Suppress("DEPRECATION")
+            runCatching { java.io.File(android.os.Environment.getExternalStorageDirectory(), dir).listFiles() }.getOrNull()
+                ?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { dirs += it.name }
+            pendingDirs.filter { it.startsWith(dir, ignoreCase = true) && it.length > dir.length }
+                .forEach { dirs += it.substring(dir.length).substringBefore('/') }
             return Listing(dirs.toList(), files.sortedByDescending { it.third }.take(2000))
         }
         val dirId = resolveDir(ctx, root.tree, path) ?: throw IllegalArgumentException("bad_folder")
@@ -207,7 +213,7 @@ object SharedFolders {
         val mime = mimeOf(name)
         val parts = cleanPath(path) ?: throw IllegalArgumentException("bad_folder")
         if (root.tree != null) {
-            val dirId = resolveDir(ctx, root.tree, path) ?: throw IllegalArgumentException("bad_folder")
+            val dirId = resolveDir(ctx, root.tree, path, create = true) ?: throw IllegalArgumentException("bad_folder")
             val doc = DocumentsContract.createDocument(ctx.contentResolver,
                 DocumentsContract.buildDocumentUriUsingTree(root.tree, dirId), mime, name)
                 ?: error("Couldn't create $name")
@@ -253,16 +259,41 @@ object SharedFolders {
         return if (parts.any { it == ".." || it.any { c -> c.isISOControl() } }) null else parts
     }
 
-    private fun resolveDir(ctx: Context, tree: Uri, path: String): String? {
+    /** The document id of [path] inside a picked folder; with [create], missing folders are made. */
+    private fun resolveDir(ctx: Context, tree: Uri, path: String, create: Boolean = false): String? {
         var id = DocumentsContract.getTreeDocumentId(tree)
         for (part in cleanPath(path) ?: return null) {
             var next: String? = null
             children(ctx, tree, id) { childId, name, mime, _, _ ->
                 if (next == null && name == part && mime == DocumentsContract.Document.MIME_TYPE_DIR) next = childId
             }
+            if (next == null && create) {
+                next = DocumentsContract.createDocument(ctx.contentResolver, DocumentsContract.buildDocumentUriUsingTree(tree, id),
+                    DocumentsContract.Document.MIME_TYPE_DIR, part)?.let { DocumentsContract.getDocumentId(it) }
+            }
             id = next ?: return null
         }
         return id
+    }
+
+    // Empty folders made in a standard folder that Android won't let us create on disk
+    // yet: they appear when the first file is saved into them (MediaStore makes them).
+    private val pendingDirs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Makes a subfolder [name] inside (key, path), e.g. from a laptop's "New folder". */
+    fun mkdir(ctx: Context, key: String, path: String, name: String): String {
+        val root = roots(ctx).firstOrNull { it.key == key } ?: throw IllegalArgumentException("not a shared folder")
+        val parts = cleanPath(path) ?: throw IllegalArgumentException("not a shared folder")
+        val clean = sanitize(name) ?: throw IllegalArgumentException("bad folder name")
+        if (root.tree != null) {
+            resolveDir(ctx, root.tree, (parts + clean).joinToString("/"), create = true) ?: error("Couldn't make $clean")
+        } else {
+            val rel = root.dir!! + parts.joinToString("") { "$it/" } + clean + "/"
+            @Suppress("DEPRECATION")
+            val made = runCatching { java.io.File(android.os.Environment.getExternalStorageDirectory(), rel).let { it.isDirectory || it.mkdirs() } }.getOrDefault(false)
+            if (!made) pendingDirs += rel
+        }
+        return clean
     }
 
     private fun children(ctx: Context, tree: Uri, parentId: String, each: (String, String, String, Long, Long) -> Unit) {

@@ -93,13 +93,23 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                     SharedFolders.roots(ctx).forEach { arr.put(JSONObject().put("key", it.key).put("label", it.label)) }
                     conn.send(JSONObject().put("type", "folders_response").put("default", SharedFolders.DEFAULT).put("folders", arr))
                 }
-                "list_request" -> list(conn, msg)
+                "list_request" -> if (browsable()) list(conn, msg) else notAllowed(conn)
                 "file_offer" -> receive(conn, peer, msg)
-                "fetch_request" -> serveFetch(conn, peer, msg)
+                "fetch_request" -> if (browsable()) serveFetch(conn, peer, msg) else notAllowed(conn)
+                "mkdir_request" -> {
+                    val made = runCatching { SharedFolders.mkdir(ctx, msg.optString("folder"), msg.optString("path"), msg.optString("name")) }
+                    made.onSuccess { conn.send(JSONObject().put("type", "mkdir_ok").put("name", it)) }
+                        .onFailure { conn.send(JSONObject().put("type", "error").put("code", "bad_folder").put("message", it.message ?: "")) }
+                }
                 else -> conn.send(JSONObject().put("type", "error").put("code", "unknown_type"))
             }
         }
     }
+
+    private fun browsable() = Prefs.allowBrowse(ctx)
+
+    private fun notAllowed(conn: PeerConnection) =
+        conn.send(JSONObject().put("type", "error").put("code", "not_allowed").put("message", "browsing is turned off on $myName"))
 
     private fun list(conn: PeerConnection, req: JSONObject) {
         val folder = req.optString("folder")
@@ -124,16 +134,32 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
         val arr = offer.optJSONArray("files") ?: return reject("bad_name")
         val names = mutableListOf<String>()
         val sizes = mutableListOf<Long>()
+        val paths = mutableListOf<String>() // where each file goes: the offer's path plus its own subfolder
         for (i in 0 until arr.length()) {
             val f = arr.getJSONObject(i)
             names += SharedFolders.sanitize(f.optString("name")) ?: return reject("bad_name")
             sizes += f.optLong("size", -1).takeIf { it >= 0 } ?: return reject("bad_name")
+            val rel = f.optString("path")
+            val relParts = rel.replace('\\', '/').split('/').filter { it.isNotEmpty() && it != "." }
+            if (relParts.any { SharedFolders.sanitize(it) != it }) return reject("bad_name") // no "..", no odd names
+            paths += (SharedFolders.cleanPath(path)!! + relParts).joinToString("/")
+        }
+        if (Approvals.enabled(ctx)) {
+            val label = SharedFolders.roots(ctx).first { it.key == folder }.label
+            val tops = paths.map { it.removePrefix(path.trim('/')).trim('/').substringBefore('/') }.toSet()
+            val what = when {
+                names.size == 1 -> names[0]
+                tops.size == 1 && tops.first().isNotEmpty() -> "folder ${tops.first()} (${plural(names.size, "file")})"
+                else -> plural(names.size, "file")
+            }
+            if (!Approvals.ask(ctx, tid, peer.name, what, sizes.sum(), label)) return reject("declined")
         }
         conn.send(JSONObject().put("type", "file_accept").put("transfer_id", tid))
 
         val total = sizes.sum()
         val saved = try {
-            Transfer.receive(conn, names, sizes, { SharedFolders.create(ctx, folder, path, it) }) { done, _, i ->
+            var n = 0
+            Transfer.receive(conn, names, sizes, { SharedFolders.create(ctx, folder, paths[n++], it) }) { done, _, i ->
                 Hub.transfer(tid, true, peer.name) {
                     it.name = names[i]; it.total = total; it.index = i + 1; it.count = names.size; it.sent = done
                     if (it.cancel == null) it.cancel = { it.cancelled = true; conn.abort() }

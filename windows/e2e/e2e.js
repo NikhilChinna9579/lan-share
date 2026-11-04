@@ -225,9 +225,73 @@ async function step(name, fn) {
       await waitFor("file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 2_000_000);
     });
 
+    await step('"Send to" a whole folder, into a new folder made on the phone', async () => {
+      const trip = path.join(work, "Trip");
+      fs.mkdirSync(path.join(trip, "Day 2"), { recursive: true });
+      fs.writeFileSync(path.join(trip, "a.jpg"), crypto.randomBytes(50_000));
+      fs.writeFileSync(path.join(trip, "Day 2", "b.jpg"), crypto.randomBytes(60_000));
+      fs.writeFileSync(path.join(trip, ".hidden"), "x");
+      execFileSync(lanshare, ["-data", laptopData, "send", trip], { env: { ...process.env, HOME: home }, timeout: 10_000 });
+      await page.locator(".sheet .r", { hasText: "Trip" }).getByText("2 files").waitFor();
+      await page.locator('[data-act="root"]', { hasText: "Downloads" }).click();
+      await page.locator('[data-act="newdir"]').click();
+      await page.locator("#newdir").fill("Holiday");
+      await page.locator('[data-act="mkdir"]').click();
+      await page.locator(".crumbs", { hasText: "Holiday" }).waitFor();
+      await settle(); await page.screenshot({ path: path.join(out, "w08f-folder-send.png") });
+      await page.locator('[data-act="dosend"]').click();
+      await page.getByText(/Sent folder Trip \(2 files\) to Nikhil's phone/).first().waitFor({ timeout: 15_000 });
+      for (const [p, n] of [["Holiday/Trip/a.jpg", 50_000], ["Holiday/Trip/Day 2/b.jpg", 60_000]]) {
+        const f = path.join(phoneInbox, ...p.split("/"));
+        if (!fs.existsSync(f) || fs.statSync(f).size !== n) throw new Error("missing on the phone: " + p);
+      }
+      if (fs.existsSync(path.join(phoneInbox, "Holiday", "Trip", ".hidden"))) throw new Error("hidden file was sent");
+    });
+
+    await step("ask before receiving: decline, then accept", async () => {
+      await page.locator("#settingsBtn").click();
+      await page.locator('[data-act="toggleask"]').click();
+      await waitFor("setting on", () => page.evaluate(() => S.me.ask));
+      await page.keyboard.press("Escape");
+      const f = path.join(work, "Contract.pdf");
+      fs.writeFileSync(f, crypto.randomBytes(200_000));
+      fs.rmSync(path.join(laptopDownloads, "Contract.pdf"), { force: true });
+      const ask = async (n) => {
+        procs.push(start("phone-ask" + n, fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", String(47830 + n), "-send", f]));
+        await page.getByText("Nikhil's phone wants to send Contract.pdf").waitFor({ timeout: 15_000 });
+      };
+      await ask(1);
+      await settle(); await page.screenshot({ path: path.join(out, "w08g-ask.png") });
+      await page.locator('[data-act="decline"]').click();
+      await waitFor("phone told it was declined", () => /declined the files/.test(fs.readFileSync(path.join(out, "phone-ask1.log"), "utf8")));
+      if (fs.existsSync(path.join(laptopDownloads, "Contract.pdf"))) throw new Error("declined file was saved");
+      await ask(2);
+      await page.locator('[data-act="accept"]').click();
+      await waitFor("accepted file saved", () => fs.existsSync(path.join(laptopDownloads, "Contract.pdf")) &&
+        fs.statSync(path.join(laptopDownloads, "Contract.pdf")).size === 200_000, 15_000);
+      await page.locator("#settingsBtn").click();
+      await page.locator('[data-act="toggleask"]').click();
+      await waitFor("setting off", () => page.evaluate(() => !S.me.ask));
+      await page.keyboard.press("Escape");
+    });
+
+    await step("settings: make another folder the default, rename the laptop", async () => {
+      await page.locator("#settingsBtn").click();
+      await page.locator('.r', { hasText: "Documents" }).locator('[data-act="setdefault"]').click();
+      await waitFor("Documents is default", () => page.evaluate(() => S.folders.find((f) => f.key === "documents").default));
+      await page.locator('.r', { hasText: "Downloads" }).locator('[data-act="setdefault"]').click();
+      await page.locator('[data-act="rename"]').click();
+      await page.locator("#newname").fill("NIKHIL-PC");
+      await page.locator('[data-act="dorename"]').click();
+      await page.locator("h1", { hasText: "NIKHIL-PC" }).waitFor().catch(async () => {
+        if (!(await page.evaluate(() => S.me.name === "NIKHIL-PC"))) throw new Error("name not changed");
+      });
+      await page.keyboard.press("Escape");
+    });
+
     await step("settings shows shared folders", async () => {
       await page.locator("#settingsBtn").click();
-      await page.getByText("Shared folders").waitFor();
+      await page.getByText("Shared folders", { exact: true }).waitFor();
       await page.getByText("Add a folder…").waitFor();
       await settle(); await page.screenshot({ path: path.join(out, "w09-settings.png"), fullPage: true });
       await page.keyboard.press("Escape");

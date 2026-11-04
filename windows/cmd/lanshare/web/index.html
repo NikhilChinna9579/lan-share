@@ -115,6 +115,11 @@
   .crumbs button { padding:4px 8px; border-radius:8px; color:var(--brand); font-weight:600; }
   .crumbs button:hover { background:var(--brand-soft); }
   .crumbs span { color:var(--faint); }
+  .btn.small { padding:6px 10px; font-size:13px; }
+  .row.end { justify-content:flex-end; gap:8px; margin-top:10px; }
+  .card.ask { border-color:var(--brand); }
+  .newdir { display:flex; gap:8px; padding:8px 12px; }
+  .newdir input, .field { flex:1; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font:inherit; }
   .check { width:22px; height:22px; border-radius:7px; border:2px solid var(--line); display:grid; place-items:center; flex:none; }
   .check.on { background:var(--brand); border-color:var(--brand); color:#fff; }
   .check .i { width:16px; height:16px; }
@@ -274,8 +279,15 @@ function render() {
   }
   $("banners").innerHTML = b;
 
+  // Incoming files waiting for Accept/Decline ("Ask before receiving").
+  const asks = (S.approvals || []).map((p) => `<div class="card tr ask"><div class="row"><div class="badge">${icon("down")}</div>
+      <div class="grow"><div class="t1">${esc(p.device)} wants to send ${p.count > 1 ? p.count + " files" : esc(p.names[0])}</div>
+      <div class="t2">${size(p.total)} · into ${esc(p.folder)}${p.count > 1 ? " · " + p.names.map(esc).join(", ") + (p.count > 3 ? ", …" : "") : ""}</div></div></div>
+      <div class="row end"><button class="btn ghost" data-act="decline" data-id="${p.id}">Decline</button>
+      <button class="btn" data-act="accept" data-id="${p.id}">${icon("check")}Accept</button></div></div>`).join("");
+
   // Transfers in progress (and just finished), with time taken.
-  $("transfers").innerHTML = S.transfers.map((t) => {
+  $("transfers").innerHTML = asks + S.transfers.map((t) => {
     const pct = t.total ? Math.min(100, (t.sent / t.total) * 100) : (t.state === "done" ? 100 : 0);
     const inbound = t.dir === "in", dirWord = inbound ? "From" : "To";
     const many = t.count > 1;
@@ -324,7 +336,7 @@ function render() {
       return `<div class="card dev"><div class="avatar">${icon("phone")}<span class="dot ${dot}"></span></div>
         <div class="grow"><div class="t1">${esc(d.name)}</div><div class="t2">${line}</div></div>
         <button class="btn tonal" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>${icon("send")}Send</button>
-        <button class="btn ghost" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Get files from ${esc(d.name)}">${icon("down")}Get</button>
+        <button class="iconbtn" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Get files from ${esc(d.name)}">${icon("down")}</button>
         <button class="iconbtn" data-act="devmenu" data-id="${d.id}" title="More">${icon("more")}</button></div>`;
     }).join("") + `<div class="center"><button class="btn ghost" data-act="pair">${icon("add")}Pair another phone</button></div>`;
   }
@@ -358,7 +370,23 @@ function closeModal() {
 }
 function head(title) { return `<div class="head"><h3>${title}</h3><button class="iconbtn" data-act="close" title="Close">${icon("close")}</button></div>`; }
 
+// Redraws keep whatever is being typed (live updates arrive every few seconds).
 function renderModal() {
+  const keep = {};
+  for (const id of ["newdir", "newname"]) {
+    const i = $(id);
+    if (i) keep[id] = {v: i.value, f: document.activeElement === i, s: i.selectionStart, e: i.selectionEnd};
+  }
+  renderModalNow();
+  for (const [id, k] of Object.entries(keep)) {
+    const i = $(id);
+    if (!i) continue;
+    i.value = k.v;
+    if (k.f) { i.focus(); try { i.setSelectionRange(k.s, k.e); } catch {} }
+  }
+}
+
+function renderModalNow() {
   const m = modal, el = $("sheet");
   if (m.kind === "pair") {
     const p = S.pairing;
@@ -377,6 +405,16 @@ function renderModal() {
   }
   if (m.kind === "settings") return renderSettings(el);
   if (m.kind === "send") return renderSend(el);
+  if (m.kind === "rename") {
+    el.innerHTML = head("Rename this laptop") + `<p class="lead">Phones show this name.</p>
+      <input class="field" id="newname" maxlength="60" value="${esc(S.me.name)}">
+      <div id="rerr" class="error"></div>
+      <div class="foot"><button class="btn tonal" data-act="close">Cancel</button><button class="btn" data-act="dorename">Save</button></div>`;
+    const i = $("newname");
+    if (!m.opened) { m.opened = true; setTimeout(() => { i.focus(); i.select(); }, 0); }
+    i.onkeydown = (e) => { if (e.key === "Enter") document.querySelector('[data-act="dorename"]').click(); };
+    return;
+  }
   if (m.kind === "confirm") {
     el.innerHTML = head(esc(m.title)) + `<p class="lead">${esc(m.text)}</p><div class="foot">
       <button class="btn tonal" data-act="close">Cancel</button><button class="btn danger" data-act="confirmok">${esc(m.ok)}</button></div>`;
@@ -397,17 +435,21 @@ function renderSettings(el) {
     `<div class="label">Shared folders</div><p class="small" style="margin:0 2px 8px">Phones can save into these folders (and their subfolders), and nothing else on this laptop.</p>
     <div class="rows">${S.folders.map((f) => `<div class="r"><span class="ic">${icon(folderIcon(f.key))}</span>
       <span class="grow"><div class="t1">${esc(f.label)}${f.default ? ` <span class="chip">Default</span>` : ""}</div><div class="t2" title="${esc(f.path)}">${esc(f.path)}</div></span>
+      ${f.default ? "" : `<button class="btn ghost small" data-act="setdefault" data-key="${f.key}" title="Save here when nothing else is chosen">Make default</button>`}
       <button class="iconbtn" data-act="openfolder" data-key="${f.key}" title="Open">${icon("folder")}</button>
       <button class="iconbtn" data-act="unshare" data-key="${f.key}" title="Stop sharing">${icon("close")}</button></div>`).join("")}
       <button class="r" data-act="share"><span class="ic">${icon("add")}</span><span class="grow" style="color:var(--brand);font-weight:600">Add a folder…</span></button></div>
 
     <div class="label">This laptop</div>
     <div class="rows">
+      <button class="r" data-act="rename"><span class="ic">${icon("desktop")}</span><span class="grow"><div>Name: <b>${esc(S.me.name)}</b></div><div class="t2">What your phones call this laptop · tap to change</div></span></button>
+      <button class="r" data-act="toggleask"><span class="grow"><div>Ask before receiving files</div><div class="t2">${S.me.ask ? "You accept or decline each time" : "Paired phones' files are saved straight away"}</div></span><span class="switch ${S.me.ask ? "on" : ""}"></span></button>
+      <button class="r" data-act="togglebrowse"><span class="grow"><div>Let phones browse and get files</div><div class="t2">${S.me.browse ? "Paired phones can see and get files in the shared folders" : "Phones can only send here"}</div></span><span class="switch ${S.me.browse ? "on" : ""}"></span></button>
       <button class="r" data-act="autostart"><span class="grow"><div>Start LAN Share when I sign in</div><div class="t2">So your phone can always send to this laptop</div></span><span class="switch ${S.me.autostart ? "on" : ""}"></span></button>
       <button class="r" data-act="firewall"><span class="ic">${icon("shield")}</span><span class="grow"><div>Allow through Windows Firewall</div><div class="t2">Fixes "phone can't connect to laptop". Windows asks once.</div></span></button>
       ${S.me.installed ? `<button class="r" data-act="uninstall"><span class="ic">${icon("close")}</span><span class="grow"><div>Uninstall LAN Share</div><div class="t2">Your pairings and settings are kept</div></span></button>` : ""}
       <button class="r" data-act="openlog"><span class="ic">${icon("doc")}</span><span class="grow"><div>Open log file</div><div class="t2">${esc(S.me.logPath)}</div></span></button>
-      <div class="r"><span class="ic">${icon("desktop")}</span><span class="grow"><div>${esc(S.me.name)}</div><div class="t2">${esc(S.me.host)}:${S.me.port} · version ${esc(S.me.version)}</div></span></div>
+      <div class="r"><span class="ic">${icon("desktop")}</span><span class="grow"><div>${esc(S.me.name)}</div><div class="t2">${esc(S.me.host)}:${S.me.port} · version ${esc(S.me.version)}${S.me.keyProtected ? " · key protected by Windows" : ""}</div></span></div>
     </div>
     <div class="foot"><button class="btn danger" data-act="quit">Quit LAN Share</button></div>
     <p class="small center">Closing the window keeps LAN Share running, so phones can still send to you.</p>
@@ -448,10 +490,20 @@ function renderSend(el) {
   const m = modal;
   const total = m.files.reduce((s, f) => s + f.size, 0);
   let h = head(m.get ? "Get files from a phone" : "Send files");
-  if (!m.get) h += `<div class="label">Files</div><div class="rows">` + m.files.map((f, i) => `<div class="r"><span class="ic">${icon("file")}</span>
-    <span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${size(f.size)}</div></span>
-    <button class="iconbtn" data-act="rmfile" data-i="${i}" title="Remove">${icon("close")}</button></div>`).join("") +
-    `<button class="r" data-act="addfiles"><span class="ic">${icon("add")}</span><span class="grow" style="color:var(--brand);font-weight:600">${m.files.length ? "Add more files…" : "Choose files…"}</span><span class="small">or drop them here</span></button></div>`;
+  if (!m.get) {
+    // Loose files one per row; a whole folder as one row ("Trip · 12 files").
+    const groups = [];
+    m.files.forEach((f, i) => {
+      const top = f.rel ? f.rel.split("/")[0] : "";
+      const g = top && groups.find((x) => x.top === top);
+      if (g) { g.n++; g.size += f.size; } else groups.push({top, n: 1, size: f.size, name: f.name, i});
+    });
+    h += `<div class="label">Files</div><div class="rows">` + groups.map((g) => `<div class="r"><span class="ic">${icon(g.top ? "folder" : "file")}</span>
+      <span class="grow"><div class="t1">${esc(g.top || g.name)}</div><div class="t2">${g.top ? g.n + (g.n > 1 ? " files" : " file") + " · " : ""}${size(g.size)}</div></span>
+      <button class="iconbtn" data-act="rmfile" data-i="${g.i}" data-top="${esc(g.top)}" title="Remove">${icon("close")}</button></div>`).join("") +
+      `<button class="r" data-act="addfiles"><span class="ic">${icon("add")}</span><span class="grow" style="color:var(--brand);font-weight:600">${m.files.length ? "Add more files…" : "Choose files…"}</span><span class="small">or drop them here</span></button>` +
+      `<button class="r" data-act="addfolder"><span class="ic">${icon("folder")}</span><span class="grow" style="color:var(--brand);font-weight:600">Add a whole folder…</span></button></div>`;
+  }
 
   h += `<div class="label">${m.get ? "From" : "To"}</div><div class="devpick">` + S.devices.map((d) =>
     `<button class="${m.device === d.id ? "sel" : ""}" data-act="pickdev" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>
@@ -469,6 +521,8 @@ function renderSend(el) {
       h += `<div class="crumbs"><button data-act="crumb" data-n="-1">${esc(dev ? dev.name : "Phone")}</button><span>›</span>
         <button data-act="crumb" data-n="0">${esc(m.folder.label)}</button>` +
         m.path.map((p, i) => `<span>›</span><button data-act="crumb" data-n="${i + 1}">${esc(p)}</button>`).join("") + `</div>`;
+      if (m.dirs !== null && !m.get && !m.error) h += m.newdir ? `<div class="newdir"><input id="newdir" placeholder="Folder name" maxlength="100"><button class="btn" data-act="mkdir">Create</button></div>`
+        : `<button class="link btn ghost small" data-act="newdir" style="margin:0 0 6px">${icon("add")}New folder</button>`;
       if (m.dirs === null) h += `<p class="muted">Loading…</p>`;
       else if (!(m.get && !m.dirs.length)) h += `<div class="rows">` + (m.dirs.length ? m.dirs.map((d, i) => `<button class="r" data-act="sub" data-i="${i}"><span class="ic">${icon("folder")}</span>
           <span class="grow">${esc(d)}</span><svg class="i chev" viewBox="0 0 24 24"><use href="#i-chev"/></svg></button>`).join("")
@@ -511,6 +565,26 @@ document.addEventListener("click", async (ev) => {
       case "pair": await api("/api/pair", {}); return openModal({kind: "pair"});
       case "send": return openSend({device: t.dataset.id});
       case "get": return openSend({device: t.dataset.id, get: true});
+      case "accept": return api("/api/approve", {id: t.dataset.id, ok: true});
+      case "decline": return api("/api/approve", {id: t.dataset.id, ok: false});
+      case "rename": return openModal({kind: "rename"});
+      case "dorename": {
+        try { await api("/api/settings", {name: $("newname").value}); closeModal(); }
+        catch (e) { $("rerr").textContent = e.message; }
+        return;
+      }
+      case "toggleask": return api("/api/settings", {ask: !S.me.ask});
+      case "togglebrowse": return api("/api/settings", {browse: !S.me.browse});
+      case "setdefault": return api("/api/folders/default", {key: t.dataset.key});
+      case "addfolder": { const r = await api("/api/pick/sendfolder", {}); m.files.push(...r); return renderModal(); }
+      case "newdir": m.newdir = true; renderModal(); setTimeout(() => { const i = $("newdir"); if (i) { i.focus(); i.onkeydown = (e) => { if (e.key === "Enter") document.querySelector('[data-act="mkdir"]').click(); }; } }, 0); return;
+      case "mkdir": {
+        const name = ($("newdir").value || "").trim();
+        if (!name) return;
+        const r = await api("/api/remote/mkdir", {device: m.device, folder: m.folder.key, path: m.path.join("/"), name});
+        m.newdir = false;
+        return openFolder(m.folder, [...m.path, r.name]);
+      }
       case "pickfile": { const n = m.list[+t.dataset.i].name; m.pick.has(n) ? m.pick.delete(n) : m.pick.add(n); return renderModal(); }
       case "dofetch": {
         await api("/api/fetch", {device: m.device, folder: m.folder.key, folderLabel: m.folder.label, path: m.path.join("/"), names: [...m.pick]});
@@ -543,7 +617,11 @@ document.addEventListener("click", async (ev) => {
       case "unshare": return api("/api/folders/remove", {key: t.dataset.key});
       case "autostart": return api("/api/autostart", {on: !S.me.autostart});
       case "quit": await api("/api/quit", {}); document.body.innerHTML = `<div class="wrap"><p class="muted">LAN Share has stopped. You can close this window.</p></div>`; return;
-      case "rmfile": m.files.splice(+t.dataset.i, 1); return renderModal();
+      case "rmfile": {
+        const top = t.dataset.top;
+        if (top) m.files = m.files.filter((f) => !(f.rel && f.rel.split("/")[0] === top)); else m.files.splice(+t.dataset.i, 1);
+        return renderModal();
+      }
       case "addfiles": { const r = await api("/api/pick/files", {}); m.files.push(...r); return renderModal(); }
       case "pickdev": m.device = t.dataset.id; return loadRoots();
       case "root": return openFolder(m.roots[+t.dataset.i], []);

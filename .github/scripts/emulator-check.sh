@@ -23,7 +23,9 @@ fail() { log "FAIL  $*"; FAILS=$((FAILS + 1))
          A logcat -d -s LanShare:V 2>/dev/null | tail -25 > "$OUT/FAIL-$FAILS-log.txt"; }
 A()    { timeout 30 adb "$@"; }                                   # adb, never more than 30 s
 shot() { sleep 1; timeout 20 adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null || true; }
-app()  { A shell am force-stop $PKG; A shell am start -n $PKG/.MainActivity >/dev/null; sleep "${1:-4}"; }
+# Close the notification shade if anything left it open (it would cover the app and swallow taps).
+shade_closed() { A shell cmd statusbar collapse >/dev/null 2>&1; }
+app()  { shade_closed; A shell am force-stop $PKG; A shell am start -n $PKG/.MainActivity >/dev/null; sleep "${1:-4}"; }
 # Write a file into the app's private folder (debug builds only), without using stdin.
 hook() { A shell "run-as $PKG sh -c 'mkdir -p files && echo $(printf '%s' "$2" | base64 -w0) | base64 -d > files/$1'"; }
 night(){ A shell cmd uimode night "$1" >/dev/null; sleep 2; }
@@ -46,6 +48,7 @@ state(){ get /api/state; }
 
 # Tap the on-screen element whose text (or resource id) contains $1.
 tap_text() {
+  shade_closed
   A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
   A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1 || return 1
   local xy
@@ -117,7 +120,8 @@ SIZE=$(phone_size "/sdcard/Download/Quarterly report.pdf")
 [ "$SIZE" = "3000000" ] && pass "file arrived on the phone intact size" || fail "file arrived on the phone (size: '$SIZE')"
 expect 10 'activity: received: Received Quarterly report.pdf .*in ' "phone shows it, with the time taken"
 shot 04-received-on-phone
-A shell cmd statusbar expand-notifications; sleep 2; shot 05-notification; A shell cmd statusbar collapse
+A shell cmd statusbar expand-notifications; sleep 2; shot 05-notification
+shade_closed; sleep 1; A shell input keyevent KEYCODE_BACK; sleep 1; shade_closed
 
 # ---------------------------------------------------------------- 4. laptop gets a file from the phone
 LIST=$(get "/api/remote/list?device=$DEV&folder=downloads&path=")
@@ -128,6 +132,37 @@ api /api/fetch "{\"device\":\"$DEV\",\"folder\":\"downloads\",\"folderLabel\":\"
 until_ok 30 "[ \"\$(stat -c %s '$HOME/Downloads/Quarterly report.pdf' 2>/dev/null)\" = 3000000 ]" \
   && pass "laptop got a file from the phone, intact size" || fail "laptop got a file from the phone"
 expect 10 'served 1 files to DESKTOP-NIKHIL' "phone logs what it served"
+
+# ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off
+mkdir -p "$WORK/Trip/Day 2"; head -c 70000 /dev/urandom > "$WORK/Trip/a.jpg"; head -c 80000 /dev/urandom > "$WORK/Trip/Day 2/b.jpg"
+timeout 60 ./bin/lanshare -data "$LAPTOP_DATA" -folder downloads send "$WORK/Trip" > "$OUT/send-folder.log" 2>&1
+[ "$(phone_size '/sdcard/Download/Trip/Day 2/b.jpg')" = 80000 ] && [ "$(phone_size '/sdcard/Download/Trip/a.jpg')" = 70000 ] \
+  && pass "laptop sent a whole folder; layout kept on the phone" || fail "whole folder on the phone ($(tail -1 "$OUT/send-folder.log"))"
+api /api/remote/mkdir "{\"device\":\"$DEV\",\"folder\":\"downloads\",\"path\":\"\",\"name\":\"Projects\"}" > "$WORK/mkdir.json"
+get "/api/remote/list?device=$DEV&folder=downloads&path=" | grep -q '"Projects"' \
+  && pass "laptop made a new folder on the phone" || fail "new folder on the phone ($(cat "$WORK/mkdir.json"))"
+mark; hook demo.txt ask_on; app 3
+head -c 90000 /dev/urandom > "$WORK/Contract.pdf"
+( timeout 70 ./bin/lanshare -data "$LAPTOP_DATA" -folder downloads send "$WORK/Contract.pdf" > "$OUT/send-ask.log" 2>&1 & )
+expect 20 'approval: asking about Contract.pdf' "phone asks before receiving"
+shot 05b-asking
+until_ok 10 "tap_text Accept"
+expect 15 'approval: accepted Contract.pdf' "accepting on the phone"
+until_ok 20 "[ \"\$(phone_size '/sdcard/Download/Contract.pdf')\" = 90000 ]" && pass "accepted file arrived" || fail "accepted file arrived"
+hook demo.txt ask_off; app 3; hook demo.txt browse_off; app 3
+get "/api/remote/list?device=$DEV&folder=downloads&path=" | grep -q "allow browsing" \
+  && pass "browsing off: laptop is told no" || fail "browsing off was not enforced"
+hook demo.txt browse_on; app 3
+mark; hook demo.txt send_folder; app 6
+if until_ok 30 "seen 'row: Downloads'"; then
+  until_ok 10 "tap_text Downloads"; sleep 2
+  until_ok 10 "tap_text 'Save here'"
+  until_ok 30 "[ \"\$(stat -c %s '$HOME/Downloads/Trip/Day 2/c.jpg' 2>/dev/null)\" = 100000 ]" \
+    && pass "phone sent a whole folder; layout kept on the laptop" || fail "phone sent a whole folder"
+else
+  fail "folder sheet for sending a folder"
+fi
+bail_if_crashed "folders and asking"
 
 # ---------------------------------------------------------------- 5. phone -> laptop, through the app's send flow
 mark; hook demo.txt send_test; app 6

@@ -55,6 +55,26 @@ type app struct {
 	lastSeen  map[string]presence.State
 	cancelled map[string]bool
 	quitOnce  sync.Once
+	settings  settings
+	approvals []*approval
+}
+
+// settings are this laptop's choices, kept in settings.json.
+type settings struct {
+	Name     string `json:"name,omitempty"`     // shown to phones; default: the computer's name
+	Ask      bool   `json:"askBeforeReceive"`   // ask before accepting files
+	NoBrowse bool   `json:"noBrowse,omitempty"` // phones may not list or get files from here
+}
+
+// approval is an incoming transfer waiting for Accept or Decline.
+type approval struct {
+	ID     string   `json:"id"`
+	Device string   `json:"device"`
+	Count  int      `json:"count"`
+	Total  int64    `json:"total"`
+	Names  []string `json:"names"`
+	Folder string   `json:"folder"`
+	answer chan bool
 }
 
 // requestQuit stops LAN Share (from the window's menu or the tray).
@@ -112,10 +132,17 @@ type fileInfo struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 	Temp bool   `json:"temp,omitempty"` // a dropped file copied into our outbox; deleted after sending
+	Rel  string `json:"rel,omitempty"`  // its subfolder when part of a whole folder ("Trip/Day 1")
 }
 
 func newApp(dataDir, logPath string) (*app, error) {
 	a := &app{dataDir: dataDir, logPath: logPath, name: *flagName, quit: make(chan struct{}), stopTracker: make(chan struct{})}
+	if data, err := os.ReadFile(filepath.Join(dataDir, "settings.json")); err == nil {
+		json.Unmarshal(data, &a.settings)
+	}
+	if a.name == "" {
+		a.name = a.settings.Name
+	}
 	if a.name == "" {
 		a.name, _ = os.Hostname()
 		if a.name == "" {
@@ -145,7 +172,9 @@ func newApp(dataDir, logPath string) (*app, error) {
 }
 
 func (a *app) start() error {
-	a.srv = &server.Server{Name: a.name, Identity: a.id, Trust: a.trust, Folders: a.folders, OnEvent: a.onServerEvent}
+	a.srv = &server.Server{Name: a.name, Identity: a.id, Trust: a.trust, Folders: a.folders, OnEvent: a.onServerEvent,
+		AllowBrowse: func() bool { a.mu.Lock(); defer a.mu.Unlock(); return !a.settings.NoBrowse },
+		Approve:     a.approve}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *flagPort))
 	if err != nil {
 		if ln, err = net.Listen("tcp", ":0"); err != nil { // port taken: any port; mDNS tells phones
@@ -173,28 +202,24 @@ func (a *app) start() error {
 		a.note("error", "No Wi-Fi or network connection", "Connect to your home Wi-Fi; LAN Share will pick it up.", "")
 	}
 
-	node, err := mdns.Start(&mdns.Service{
-		Instance: a.name, Host: a.name, Port: a.port,
-		TXT: map[string]string{"v": strconv.Itoa(protocol.Version), "id": a.id.Fingerprint, "p": "windows"},
-	}, a.tracker.Seen)
-	if err != nil {
-		log.Printf("mDNS unavailable: %v", err)
-	} else {
-		a.node = node
-		node.Query()
-		go func() {
-			t := time.NewTicker(15 * time.Second)
-			defer t.Stop()
-			for {
-				select {
-				case <-t.C:
+	a.startMDNS()
+	go func() { // ask the network again now and then: phones that just woke up answer
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				a.mu.Lock()
+				node := a.node
+				a.mu.Unlock()
+				if node != nil {
 					node.Query()
-				case <-a.quit:
-					return
 				}
+			case <-a.quit:
+				return
 			}
-		}()
-	}
+		}
+	}()
 
 	a.tracker.OnChange = a.onPresence
 	go a.tracker.Run(a.stopTracker)
@@ -223,11 +248,122 @@ func (a *app) start() error {
 	return writeInstance(a.dataDir, instance{Port: a.apiPort, Token: a.token, PID: os.Getpid(), Built: buildTime})
 }
 
+// startMDNS announces this laptop (under its current name) and listens for phones.
+func (a *app) startMDNS() {
+	node, err := mdns.Start(&mdns.Service{
+		Instance: a.name, Host: a.name, Port: a.port,
+		TXT: map[string]string{"v": strconv.Itoa(protocol.Version), "id": a.id.Fingerprint, "p": "windows"},
+	}, a.tracker.Seen)
+	if err != nil {
+		log.Printf("mDNS unavailable: %v", err)
+		return
+	}
+	a.mu.Lock()
+	a.node = node
+	a.mu.Unlock()
+	node.Query()
+}
+
+// rename changes the name phones see, and announces it at once.
+func (a *app) rename(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 60 {
+		return errors.New("use 1 to 60 characters")
+	}
+	a.mu.Lock()
+	old := a.node
+	a.node = nil
+	a.name = name
+	a.settings.Name = name
+	a.mu.Unlock()
+	a.srv.Name = name
+	a.tracker.MyName = name
+	if old != nil {
+		old.Close() // says goodbye under the old name
+	}
+	a.startMDNS()
+	a.note("info", "Renamed this laptop to "+name, "Phones see the new name from now on.", "")
+	return a.saveSettings()
+}
+
+func (a *app) saveSettings() error {
+	a.mu.Lock()
+	data, _ := json.MarshalIndent(a.settings, "", "  ")
+	a.mu.Unlock()
+	return os.WriteFile(filepath.Join(a.dataDir, "settings.json"), data, 0o600)
+}
+
+// approve is asked by the server before accepting files. With "Ask before receiving"
+// on, the window (and a notification) asks; no answer within 50 s declines.
+func (a *app) approve(peerID, from string, offer protocol.FileOffer) bool {
+	a.mu.Lock()
+	ask := a.settings.Ask
+	a.mu.Unlock()
+	if !ask {
+		return true
+	}
+	ap := &approval{ID: offer.TransferID, Device: from, Count: len(offer.Files), Folder: a.folderLabel(offer.Folder), answer: make(chan bool, 1)}
+	for i, f := range offer.Files {
+		ap.Total += f.Size
+		if i < 3 {
+			ap.Names = append(ap.Names, f.Name)
+		}
+	}
+	a.mu.Lock()
+	a.approvals = append(a.approvals, ap)
+	a.mu.Unlock()
+	what := fileCount(ap.Count)
+	if ap.Count == 1 {
+		what = ap.Names[0]
+	}
+	log.Printf("asking: %s wants to send %s (%s)", from, what, sizeStr(ap.Total))
+	go notify(from+" wants to send "+what, sizeStr(ap.Total)+" · open LAN Share to accept or decline")
+	a.hub.changed()
+	a.showWindow()
+	ok := false
+	select {
+	case ok = <-ap.answer:
+	case <-time.After(50 * time.Second):
+	case <-a.quit:
+	}
+	a.mu.Lock()
+	for i, x := range a.approvals {
+		if x == ap {
+			a.approvals = append(a.approvals[:i], a.approvals[i+1:]...)
+			break
+		}
+	}
+	a.mu.Unlock()
+	if !ok {
+		a.note("info", "Declined "+what+" from "+from, "", "")
+	}
+	a.hub.changed()
+	return ok
+}
+
+func (a *app) answer(id string, ok bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, x := range a.approvals {
+		if x.ID == id {
+			select {
+			case x.answer <- ok:
+			default:
+			}
+			return nil
+		}
+	}
+	return errors.New("that request has expired")
+}
+
 func (a *app) stop() {
 	stopTray()
 	close(a.stopTracker)
-	if a.node != nil {
-		a.node.Close() // goodbye on mDNS: phones mark us offline at once
+	a.mu.Lock()
+	node := a.node
+	a.mu.Unlock()
+	if node != nil {
+		node.Close() // goodbye on mDNS: phones mark us offline at once
 	}
 	os.Remove(instanceFile(a.dataDir))
 }
@@ -441,14 +577,7 @@ func (a *app) startPairing() error {
 // ---------------------------------------------------------------- sending
 
 func (a *app) handoff(paths []string) {
-	var list []fileInfo
-	for _, p := range paths {
-		st, err := os.Stat(p)
-		if err != nil || st.IsDir() {
-			continue
-		}
-		list = append(list, fileInfo{Path: p, Name: filepath.Base(p), Size: st.Size()})
-	}
+	list := statFiles(paths) // folders too ("Send to" on a folder)
 	a.mu.Lock()
 	a.pending = list
 	a.pendingN++
@@ -512,10 +641,7 @@ func (a *app) startSend(tid string, req *sendReq) string {
 		started := time.Now()
 		err := a.sendNowList(tid, req.DeviceID, req.Folder, req.Sub, req.List)
 		took := time.Since(started)
-		what := fileCount(len(req.List))
-		if len(req.List) == 1 {
-			what = req.List[0].Name
-		}
+		what := describe(req.List)
 		switch {
 		case a.wasCancelled(tid):
 			a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.State, t.Message = "cancelled", "Cancelled. Nothing was kept on the phone." })
@@ -549,11 +675,11 @@ func (a *app) sendNowList(tid, deviceID, folder, sub string, list []fileInfo) er
 	if a.wasCancelled(tid) { // cancelled while we were still connecting
 		return errors.New("cancelled")
 	}
-	paths := make([]string, len(list))
+	items := make([]client.Item, len(list))
 	for i, f := range list {
-		paths[i] = f.Path
+		items[i] = client.Item{Path: f.Path, Rel: f.Rel}
 	}
-	_, err = c.SendFiles(tid, folder, sub, paths, func(sent, total int64, i int) {
+	_, err = c.SendItems(tid, folder, sub, items, func(sent, total int64, i int) {
 		a.updateTransfer(tid, "out", d.Name, func(t *transfer) { t.Sent, t.Total, t.Name, t.Index = sent, total, list[i].Name, i+1 })
 	})
 	return err
@@ -735,7 +861,9 @@ func (a *app) stateJSON() []byte {
 			"name": a.name, "host": a.host, "port": a.port, "version": version,
 			"logPath": a.logPath, "autostart": autostartEnabled(), "platform": platformName(),
 			"installed": isInstalled(), "canInstall": installSupported() && !isInstalled(),
+			"ask": a.settings.Ask, "browse": !a.settings.NoBrowse, "keyProtected": identity.Protected(),
 		},
+		"approvals": orEmpty(a.approvals),
 		"devices":   orEmpty(devs),
 		"folders":   orEmpty(fl),
 		"pairing":   pair,
@@ -781,6 +909,24 @@ func durStr(d time.Duration) string {
 		return fmt.Sprintf("%d min %d s", int(d.Minutes()), int(d.Seconds())%60)
 	}
 	return fmt.Sprintf("%d h %d min", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// describe names what's being sent: "photo.jpg", "3 files", or "folder Trip (12 files)".
+func describe(list []fileInfo) string {
+	if len(list) == 1 && list[0].Rel == "" {
+		return list[0].Name
+	}
+	top := ""
+	for i, f := range list {
+		t := strings.SplitN(f.Rel, "/", 2)[0]
+		if i == 0 {
+			top = t
+		}
+		if t == "" || t != top {
+			return fileCount(len(list))
+		}
+	}
+	return "folder " + top + " (" + fileCount(len(list)) + ")"
 }
 
 func fileCount(n int) string {

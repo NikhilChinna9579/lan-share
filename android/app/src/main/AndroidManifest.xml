@@ -68,6 +68,11 @@
             android:theme="@style/Theme.LanShare.Assistant"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- Accept / Decline buttons on the "wants to send" notification. -->
+        <receiver
+            android:name=".Approvals$Answer"
+            android:exported="false" />
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
