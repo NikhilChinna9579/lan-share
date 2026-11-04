@@ -97,7 +97,8 @@ class MainActivity : Activity() {
             steps.addView(row)
         }
         findViewById<View>(R.id.scanButton).setOnClickListener { scanQr() }
-        pairAnother.setOnClickListener { scanQr() }
+        pairAnother.setOnClickListener { pairMenu() }
+        findViewById<View>(R.id.pairPhoneButton).setOnClickListener { pairMenu() }
         findViewById<View>(R.id.settingsButton).setOnClickListener { showSharedFolders(firstTime = false) }
         findViewById<View>(R.id.assistantButton).setOnClickListener { startActivity(Intent(this, AssistantActivity::class.java)) }
 
@@ -325,6 +326,7 @@ class MainActivity : Activity() {
     private fun bindDevice(row: View, d: Device) {
         val s = presence.status(d.id)
         row.findViewById<TextView>(R.id.name).text = d.name
+        row.findViewById<ImageView>(R.id.icon).setImageResource(if (d.isPhone) R.drawable.ic_phone else R.drawable.ic_laptop)
         val status = row.findViewById<TextView>(R.id.status)
         val dotView = row.findViewById<View>(R.id.statusDot)
         val sendBtn = row.findViewById<Button>(R.id.send)
@@ -415,6 +417,100 @@ class MainActivity : Activity() {
                 showCard(Kind.ERROR, "Couldn't open the scanner",
                     "Update Google Play services and connect to the internet once, then try again.")
             }
+    }
+
+    /** Laptop (scan its QR code) or another phone (6-digit code)? */
+    private fun pairMenu() {
+        val sheet = Sheet(this, "Pair", "You only do this once per device.")
+        sheet.add(Sheet.Row(R.drawable.ic_qr, "A laptop", sub = "Scan the QR code LAN Share shows on it") { scanQr() })
+        sheet.add(Sheet.Row(R.drawable.ic_phone, "A phone nearby", sub = "Pick it, then type the code it shows") { pairNearby() })
+        sheet.add(Sheet.Row(R.drawable.ic_shield, "Let another phone pair with this one", sub = "Shows a code to type on the other phone") { showPairCode() })
+        sheet.show()
+    }
+
+    private fun showPairCode() {
+        worker.execute { runCatching { Identity.ensure(myName) } }
+        val code = PhonePairing.start()
+        ReceiveService.start(this) // listening is needed to be paired with
+        Log.i(TAG, "phone pairing open: code $code")
+        val big = TextView(this).apply {
+            text = code.chunked(3).joinToString(" ")
+            textSize = 40f
+            letterSpacing = 0.1f
+            setTextColor(getColor(R.color.ink))
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, dp(12), 0, dp(4))
+        }
+        val note = TextView(this).apply {
+            setTextColor(getColor(R.color.ink_muted))
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(20), 0, dp(20), dp(8))
+        }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(big); addView(note) }
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Pairing code")
+            .setView(box)
+            .setNegativeButton("Stop", null)
+            .setOnDismissListener { PhonePairing.stop(); main.removeCallbacksAndMessages(PAIR_TICK) }
+            .show()
+        fun tick() {
+            val who = PhonePairing.justPaired
+            if (who != null) {
+                PhonePairing.justPaired = null
+                dialog.dismiss()
+                showCard(Kind.DONE, "Paired with $who", "You can send files to each other now.")
+                render(); presence.checkNow()
+                return
+            }
+            if (!PhonePairing.open()) { note.text = "The code expired. Close and try again."; return }
+            note.text = "On the other phone: LAN Share → Pair → A phone nearby → $myName, then type this code.\nValid for ${PhonePairing.secondsLeft()} s."
+            main.postAtTime({ tick() }, PAIR_TICK, android.os.SystemClock.uptimeMillis() + 1000)
+        }
+        tick()
+    }
+
+    private fun pairNearby() {
+        val sheet = Sheet(this, "Pair a phone nearby", "On the other phone, choose “Let another phone pair with this one”.")
+        fun fill() {
+            if (!sheet.isShowing && sheet.shownOnce) return
+            sheet.redraw {
+                val phones = presence.nearbyUnpaired().filter { it.platform == "android" }
+                if (phones.isEmpty()) sheet.message("Looking for phones on this Wi-Fi…")
+                phones.forEach { n ->
+                    sheet.add(Sheet.Row(R.drawable.ic_phone, n.name, sub = n.host) { askCode(n) })
+                }
+            }
+            main.postDelayed({ fill() }, 1500)
+        }
+        sheet.show()
+        fill()
+    }
+
+    private fun askCode(n: Presence.Nearby) {
+        val input = android.widget.EditText(this).apply {
+            hint = "6-digit code"; setSingleLine(); inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        val box = android.widget.FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) }
+        android.app.AlertDialog.Builder(this).setTitle("Code shown on ${n.name}").setView(box)
+            .setPositiveButton("Pair") { _, _ -> pairPhone(n, input.text.toString()) }
+            .setNegativeButton("Cancel", null).show()
+        input.requestFocus()
+    }
+
+    private fun pairPhone(n: Presence.Nearby, code: String) {
+        showCard(Kind.WORKING, "Pairing…", "Talking to ${n.name}")
+        worker.execute {
+            val r = runCatching { Identity.ensure(myName); Client.pairPhone(this, n, code, myName) }
+            Log.i(TAG, "pair phone: " + r.map { "ok with ${it.name}" }.getOrElse { "failed: $it" })
+            ui {
+                r.onSuccess {
+                    showCard(Kind.DONE, "Paired with ${it.name}", "You can send files to each other now.")
+                    Hub.add("paired", "Paired with ${it.name}")
+                    ReceiveService.start(this)
+                    render(); presence.checkNow()
+                }.onFailure { showCard(Kind.ERROR, "Pairing didn't work", friendly(it, null)) }
+            }
+        }
     }
 
     private fun pair(qrText: String) {
@@ -865,12 +961,29 @@ class MainActivity : Activity() {
             f.delete()
             Log.i(TAG, "test hook: $mode")
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
+            if (mode.startsWith("say:")) { // a file just shared + a sentence for the assistant
+                val f = File(cacheDir, "Shared note.txt").apply { writeBytes(ByteArray(200_000) { (it % 13).toByte() }) }
+                Hub.shared(listOf(Uri.fromFile(f)))
+                startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", mode.removePrefix("say:")))
+                return@let
+            }
+            if (mode.startsWith("pair_phone:")) { // pair_phone:host:port:id:code
+                val (_, host, port, id, code) = mode.split(":")
+                pairPhone(Presence.Nearby(id, "Test phone", host, port.toInt(), "android"), code)
+                return@let
+            }
             when (mode) {
                 "add_offline" -> { DeviceStore.put(this, Device("0".repeat(64), "Office PC", "10.0.2.99", Protocol.DEFAULT_PORT, 0)); render() }
                 "sending" -> Hub.transfer("demo-out", false, d.name) { it.name = "holiday-photos.zip"; it.total = 64_000_000; it.sent = 40_300_000 }
                 "receiving" -> Hub.transfer("demo-in", true, d.name) { it.name = "Quarterly report.pdf"; it.total = 9_000_000; it.sent = 2_700_000 }
                 "error" -> showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(ConnectException(), d), device = d.id)
                 "folders" -> showSharedFolders(firstTime = true)
+                "allow_pair" -> {
+                    Identity.ensure(myName)
+                    val code = PhonePairing.start()
+                    ReceiveService.start(this)
+                    Log.i(TAG, "phone pairing open: code $code id ${Identity.fingerprint}")
+                }
                 "ask_on" -> Approvals.setEnabled(this, true)
                 "ask_off" -> Approvals.setEnabled(this, false)
                 "browse_off" -> Prefs.setAllowBrowse(this, false)
@@ -926,5 +1039,6 @@ class MainActivity : Activity() {
         private const val REQUEST_TREE = 3
         private const val REQUEST_MEDIA = 4
         private const val REQUEST_SEND_TREE = 6
+        private val PAIR_TICK = Any()
     }
 }

@@ -34,6 +34,7 @@ func main() {
 	sendFile := flag.String("send", "", "after starting, send this file to the paired laptop (Downloads)")
 	slowMB := flag.Int64("slow", 0, "receive at most this many MB per second (to test cancelling)")
 	cantReach := flag.Bool("cant-reach", false, "pretend this phone can't connect to the laptop (firewall test)")
+	allowPair := flag.String("allow-pair", "", "open pairing (like a phone showing its code) and write {code,id} to this file")
 	fetch := flag.String("fetch", "", "after starting, get folder:name from the paired laptop into inbox/Fetched")
 	flag.Parse()
 
@@ -90,11 +91,21 @@ func main() {
 		if e.Kind == server.EventReceived {
 			log.Printf("received %s (%d bytes) from %s", e.Path, e.Bytes, e.Device)
 		}
+		if e.Kind == server.EventPaired {
+			log.Printf("paired with %s", e.Device)
+		}
 		if e.Kind == server.EventSent {
 			log.Printf("served %d files (%d bytes) to %s", e.Count, e.Bytes, e.Device)
 		}
 	}}
 	srv.Throttle = *slowMB << 20
+	srv.Platform = "android"
+	if *allowPair != "" {
+		code, _, err := srv.StartPairing()
+		check(err)
+		b, _ := json.Marshal(map[string]string{"code": code, "id": id.Fingerprint})
+		check(os.WriteFile(*allowPair, b, 0o600))
+	}
 	if *cantReach {
 		no := false
 		srv.ReportReach = &no

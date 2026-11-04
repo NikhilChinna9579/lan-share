@@ -5,10 +5,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * A paired laptop. [id] (its key fingerprint) never changes; [host] and [port] are just
- * where it was last found, and get updated whenever discovery finds it somewhere new.
+ * A paired laptop (or phone). [id] (its key fingerprint) never changes; [host] and [port]
+ * are just where it was last found, and get updated whenever discovery finds it somewhere new.
  */
-data class Device(val id: String, val name: String, val host: String, val port: Int, val pairedAt: Long)
+data class Device(val id: String, val name: String, val host: String, val port: Int, val pairedAt: Long,
+                  val platform: String = "windows") {
+    val isPhone get() = platform == "android"
+}
 
 /** The list of paired laptops, saved in the app's private preferences. */
 object DeviceStore {
@@ -23,7 +26,7 @@ object DeviceStore {
         return (0 until arr.length()).map {
             val o = arr.getJSONObject(it)
             Device(o.getString("id"), o.optString("name", "Laptop"), o.optString("host"),
-                o.optInt("port", Protocol.DEFAULT_PORT), o.optLong("pairedAt"))
+                o.optInt("port", Protocol.DEFAULT_PORT), o.optLong("pairedAt"), o.optString("platform", "windows"))
         }.sortedBy { it.name.lowercase() }
     }
 
@@ -46,7 +49,7 @@ object DeviceStore {
         val arr = JSONArray()
         list.forEach {
             arr.put(JSONObject().put("id", it.id).put("name", it.name).put("host", it.host)
-                .put("port", it.port).put("pairedAt", it.pairedAt))
+                .put("port", it.port).put("pairedAt", it.pairedAt).put("platform", it.platform))
         }
         prefs(ctx).edit().putString(KEY, arr.toString()).commit()
     }

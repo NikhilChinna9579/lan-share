@@ -65,6 +65,7 @@ type Event struct {
 // Server holds everything needed to answer peers.
 type Server struct {
 	Name     string
+	Platform string // in our hello; "" = "windows"
 	Identity *identity.Identity
 	Trust    *trust.Store
 	Folders  *files.Folders
@@ -204,7 +205,7 @@ func (s *Server) handle(c *tls.Conn) {
 		protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "version", Message: "unsupported protocol version"})
 		return
 	}
-	if err := protocol.WriteFrame(conn, protocol.Hello{Type: "hello", V: protocol.Version, Name: s.Name, Platform: "windows"}); err != nil {
+	if err := protocol.WriteFrame(conn, protocol.Hello{Type: "hello", V: protocol.Version, Name: s.Name, Platform: s.platform()}); err != nil {
 		return
 	}
 
@@ -518,6 +519,13 @@ func (s *Server) serveFetch(conn io.ReadWriter, peerID, from string, req protoco
 	s.emit(Event{Kind: EventSent, DeviceID: peerID, Device: from, Transfer: req.TransferID, Folder: req.Folder,
 		Name: req.Files[0], Bytes: total, Count: len(paths), Duration: time.Since(start), Done: true})
 	return nil
+}
+
+func (s *Server) platform() string {
+	if s.Platform == "" {
+		return "windows"
+	}
+	return s.Platform
 }
 
 func (s *Server) browsable() bool { return s.AllowBrowse == nil || s.AllowBrowse() }

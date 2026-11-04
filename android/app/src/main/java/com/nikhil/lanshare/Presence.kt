@@ -34,6 +34,13 @@ class Presence(private val ctx: Context, private val myName: String, private val
     private val statuses = ConcurrentHashMap<String, Status>()
     private val misses = ConcurrentHashMap<String, Int>()
     private val discovered = ConcurrentHashMap<String, Pair<String, Int>>() // id → (host, port)
+
+    /** A LAN Share device announcing itself on this Wi-Fi (paired or not). */
+    data class Nearby(val id: String, val name: String, val host: String, val port: Int, val platform: String)
+    private val nearby = ConcurrentHashMap<String, Nearby>()
+
+    /** Devices seen on this Wi-Fi that aren't paired yet (for "Pair a phone nearby"). */
+    fun nearbyUnpaired(): List<Nearby> = nearby.values.filter { DeviceStore.get(ctx, it.id) == null }.sortedBy { it.name }
     @Volatile private var lastScan = 0L
     private var exec: ScheduledExecutorService? = null
 
@@ -187,6 +194,8 @@ class Presence(private val ctx: Context, private val myName: String, private val
                     val id = info.attributes["id"]?.toString(Charsets.UTF_8)
                     val host = info.host?.hostAddress
                     if (id != null && host != null && info.host is Inet4Address && id != runCatching { Identity.fingerprint }.getOrNull()) {
+                        nearby[id] = Nearby(id, info.serviceName, host, info.port,
+                            info.attributes["p"]?.toString(Charsets.UTF_8) ?: "windows")
                         val old = discovered.put(id, host to info.port)
                         if (old != host to info.port && DeviceStore.get(ctx, id) != null) checkNow()
                     }

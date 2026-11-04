@@ -2,6 +2,7 @@ package com.nikhil.lanshare
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -63,11 +64,12 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
         s.soTimeout = 15_000
         s.startHandshake() // fails here for anyone who isn't paired
         val peerId = Identity.fingerprintOf(s.session.peerCertificates[0] as X509Certificate)
-        val peer = DeviceStore.get(ctx, peerId) ?: return
-        Hub.inboundContact(peerId)
+        var peer = DeviceStore.get(ctx, peerId)
+        if (peer == null && !PhonePairing.open()) return
+        if (peer != null) Hub.inboundContact(peerId)
         // Where the laptop connected from is only a hint (it may be a VPN or virtual
         // adapter address we can't reach). Presence tries it, and saves it only if it works.
-        s.inetAddress?.hostAddress?.let { Hub.inboundFrom(peerId, it) }
+        if (peer != null) s.inetAddress?.hostAddress?.let { Hub.inboundFrom(peerId, it) }
         val conn = PeerConnection(s)
         val hello = conn.expect("hello")
         if (hello.optInt("v") != Protocol.VERSION) {
@@ -81,7 +83,29 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
             } catch (e: IOException) {
                 return // the laptop hung up between messages: normal end
             }
-            when (msg.optString("type")) {
+            val type = msg.optString("type")
+            if (peer == null && type != "pair_request") {
+                conn.send(JSONObject().put("type", "error").put("code", "not_trusted"))
+                return
+            }
+            when (type) {
+                "pair_request" -> {
+                    val why = PhonePairing.check(msg.optString("code"))
+                    if (why != null) {
+                        conn.send(JSONObject().put("type", "pair_fail").put("reason", why))
+                        Log.i("LanShare", "phone pairing refused: $why")
+                    } else {
+                        val name = msg.optString("name").ifBlank { "Phone" }
+                        val d = Device(peerId, name, s.inetAddress?.hostAddress ?: "", Protocol.DEFAULT_PORT,
+                            System.currentTimeMillis(), hello.optString("platform", "android"))
+                        DeviceStore.put(ctx, d)
+                        peer = d
+                        conn.send(JSONObject().put("type", "pair_ok").put("name", myName))
+                        PhonePairing.justPaired = name
+                        Hub.add("paired", "Paired with $name", "It can send to this phone, and you to it")
+                        Log.i("LanShare", "phone pairing: paired with $name")
+                    }
+                }
                 "ping" -> {
                     // Tell the laptop whether we can connect back to it: if not, it can
                     // point the user at the Windows Firewall fix.
@@ -95,8 +119,8 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                     conn.send(JSONObject().put("type", "folders_response").put("default", SharedFolders.DEFAULT).put("folders", arr))
                 }
                 "list_request" -> if (browsable()) list(conn, msg) else notAllowed(conn)
-                "file_offer" -> receive(conn, peer, msg)
-                "fetch_request" -> if (browsable()) serveFetch(conn, peer, msg) else notAllowed(conn)
+                "file_offer" -> receive(conn, peer!!, msg)
+                "fetch_request" -> if (browsable()) serveFetch(conn, peer!!, msg) else notAllowed(conn)
                 "search_request" -> if (browsable()) {
                     val arr = JSONArray()
                     SharedFolders.search(ctx, msg.optString("query")).forEach { h ->
@@ -268,7 +292,8 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
     private inner class PairedOnly : X509TrustManager {
         override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
             val cert = chain?.firstOrNull() ?: throw CertificateException("no certificate")
-            if (DeviceStore.get(ctx, Identity.fingerprintOf(cert)) == null) throw CertificateException("not paired")
+            // Strangers get in only while this phone shows a pairing code (and then may only pair).
+            if (DeviceStore.get(ctx, Identity.fingerprintOf(cert)) == null && !PhonePairing.open()) throw CertificateException("not paired")
         }
 
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) =

@@ -63,7 +63,7 @@ class ReceiveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (DeviceStore.all(this).isEmpty()) stopSelf()
+        if (DeviceStore.all(this).isEmpty() && !PhonePairing.open()) stopSelf()
         Bubble.current?.refresh() // the bubble setting or permission may have changed
         return START_STICKY
     }
@@ -111,7 +111,7 @@ class ReceiveService : Service() {
             private set
 
         fun start(ctx: Context) {
-            if (DeviceStore.all(ctx).isEmpty()) return
+            if (DeviceStore.all(ctx).isEmpty() && !PhonePairing.open()) return
             runCatching { ctx.startForegroundService(Intent(ctx, ReceiveService::class.java)) }
         }
 

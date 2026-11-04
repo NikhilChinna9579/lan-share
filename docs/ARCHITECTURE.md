@@ -123,6 +123,14 @@ exists for those.
    send/fetch code as the home screen.
 5. An online AI model for free-form requests is planned; it needs an API key.
 
+### 3.2d Phone ↔ phone
+
+Phones pair with each other without a QR code: phone A shows a 6-digit code (2
+minutes, one use, 5 wrong tries close it) and, only while it does, lets strangers
+complete the TLS handshake, and then only to send `pair_request`. Phone B lists the
+LAN Share phones it sees on mDNS (TXT `p=android`), the person picks A and types the
+code. From then on they are ordinary paired devices: send, get, search, assistant.
+
 ### 3.3 Presence (online / offline)
 
 1. Each app keeps announcing `_lanshare._tcp` on mDNS.

@@ -249,6 +249,35 @@ shot 18-assistant-from-bubble
 A shell input keyevent KEYCODE_BACK
 bail_if_crashed "bubble"
 
+# ---------------------------------------------------------------- 8b. phone <-> phone
+# This phone pairs with another "phone" (the simulator, which shows a code), then sends it
+# a file through the assistant.
+./bin/fakephone -data "$WORK/phone2" -name "Test phone" -port 47840 -allow-pair "$WORK/p2.json" > "$OUT/phone2.log" 2>&1 &
+P2=$!
+until_ok 10 "[ -f '$WORK/p2.json' ]"
+P2ID=$(python3 -c "import json;print(json.load(open('$WORK/p2.json'))['id'])"); P2CODE=$(python3 -c "import json;print(json.load(open('$WORK/p2.json'))['code'])")
+mark; hook demo.txt "pair_phone:10.0.2.2:47840:$P2ID:$P2CODE"; app 3
+expect 20 'pair phone: ok with Test phone' "paired with another phone using its code"
+mark; hook demo.txt "say:send this to test phone in downloads"; app 3
+expect 20 'assistant: plan send Shared note.txt to Test phone in Downloads' "assistant sends to the other phone"
+until_ok 30 "[ \"\$(stat -c %s '$WORK/phone2/inbox/Download/Shared note.txt' 2>/dev/null)\" = 200000 ]" \
+  && pass "file arrived on the other phone" || fail "file arrived on the other phone"
+kill $P2 2>/dev/null
+# And the other way: this phone shows a code, the other phone pairs with it.
+mark; hook demo.txt allow_pair; app 3
+if until_ok 15 "seen 'phone pairing open: code [0-9]{6} id [0-9a-f]{64}'"; then
+  L=$(applog | tail -n +$((MARK + 1)) | grep -oE 'phone pairing open: code [0-9]{6} id [0-9a-f]{64}' | tail -1)
+  CODE=$(echo "$L" | awk '{print $5}'); PID_=$(echo "$L" | awk '{print $7}')
+  printf '{"v":1,"host":"127.0.0.1","port":47821,"id":"%s","name":"Emulator","code":"%s"}' "$PID_" "$CODE" > "$WORK/p3.json"
+  timeout 30 ./bin/fakephone -data "$WORK/phone3" -name "Third phone" -port 47841 -pair "$WORK/p3.json" > "$OUT/phone3.log" 2>&1 &
+  P3=$!
+  expect 20 'phone pairing: paired with Third phone' "another phone paired with this one using the code"
+  kill $P3 2>/dev/null
+else
+  fail "phone shows a pairing code"
+fi
+bail_if_crashed "phone to phone"
+
 # ---------------------------------------------------------------- 9. screens with test data
 hook demo.txt add_offline; app 8; shot 09-devices-light
 night yes; app 8; shot 09-devices-dark; night no

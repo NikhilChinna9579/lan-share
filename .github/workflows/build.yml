@@ -172,7 +172,7 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - name: Build laptop program (Linux build of the Windows app)
         working-directory: windows
-        run: go build -o ../bin/lanshare ./cmd/lanshare
+        run: go build -o ../bin/lanshare ./cmd/lanshare && go build -o ../bin/fakephone ./cmd/fakephone
       - name: Run on emulator
         timeout-minutes: 25
         uses: reactivecircus/android-emulator-runner@v2

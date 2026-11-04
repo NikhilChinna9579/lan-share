@@ -157,7 +157,11 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
         }
     }
 
-    fun show() { dialog.show(); fit(); android.util.Log.i("LanShare", "sheet: $title") }
+    /** True once shown (so a refresh loop knows a hidden sheet was closed, not unopened). */
+    var shownOnce = false
+        private set
+
+    fun show() { dialog.show(); shownOnce = true; fit(); android.util.Log.i("LanShare", "sheet: $title") }
     fun dismiss() = dialog.dismiss()
     val isShowing get() = dialog.isShowing
 

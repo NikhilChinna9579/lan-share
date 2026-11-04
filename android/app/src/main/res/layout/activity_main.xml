@@ -236,6 +236,14 @@
                 android:layout_marginTop="20dp"
                 android:drawableStart="@drawable/ic_qr"
                 android:text="Scan QR code" />
+
+            <Button
+                android:id="@+id/pairPhoneButton"
+                style="@style/Button.Text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Pair with another phone instead" />
         </LinearLayout>
 
         <!-- Recent activity -->

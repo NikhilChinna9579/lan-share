@@ -48,6 +48,24 @@ object Client {
         }
     }
 
+    /** Pairs with another phone found on the Wi-Fi, using the 6-digit code it shows. */
+    fun pairPhone(ctx: Context, near: Presence.Nearby, code: String, myName: String): Device =
+        PeerConnection.open(near.host, near.port, near.id, myName).use { conn ->
+            conn.send(JSONObject().put("type", "pair_request").put("code", code.trim()).put("name", myName))
+            val reply = conn.expect("pair_ok", "pair_fail")
+            if (reply.getString("type") == "pair_fail") {
+                throw IllegalStateException(when (reply.optString("reason")) {
+                    "expired" -> "That code expired. On ${near.name}, start pairing again."
+                    "not_pairing" -> "${near.name} isn't pairing right now. On it: Pair → Let another phone pair."
+                    else -> "Wrong code. Check the 6 digits on ${near.name}."
+                })
+            }
+            val d = Device(near.id, reply.optString("name", near.name), near.host, near.port, System.currentTimeMillis(),
+                conn.peerPlatform.ifEmpty { near.platform })
+            DeviceStore.put(ctx, d)
+            d
+        }
+
     /** True if the device answers a ping at [host]:[port] with the right key. */
     fun ping(device: Device, host: String, port: Int, myName: String): Boolean = runCatching {
         PeerConnection.open(host, port, device.id, myName, connectTimeoutMs = 1_500).use { conn ->

@@ -26,8 +26,9 @@ class PeerConnection(private val socket: SSLSocket) : Closeable {
     val input = DataInputStream(BufferedInputStream(socket.inputStream, 64 * 1024))
     val output = DataOutputStream(BufferedOutputStream(socket.outputStream, 64 * 1024))
 
-    /** The peer's friendly name from its hello. */
+    /** The peer's friendly name and platform ("windows", "android") from its hello. */
     var peerName: String = ""
+    var peerPlatform: String = ""
 
     fun send(msg: JSONObject) {
         val body = msg.toString().toByteArray(Charsets.UTF_8)
@@ -84,7 +85,9 @@ class PeerConnection(private val socket: SSLSocket) : Closeable {
                 socket.startHandshake()
                 val conn = PeerConnection(socket)
                 conn.send(conn.hello(myName))
-                conn.peerName = conn.expect("hello").optString("name")
+                val hello = conn.expect("hello")
+                conn.peerName = hello.optString("name")
+                conn.peerPlatform = hello.optString("platform")
                 return conn
             } catch (e: Exception) {
                 socket.close()
