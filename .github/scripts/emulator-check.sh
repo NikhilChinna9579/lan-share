@@ -127,6 +127,13 @@ expect 30 'screen: unpaired' "first launch shows pairing"
 shot 01-unpaired-light
 bail_if_crashed "first launch"
 night yes; app; shot 01-unpaired-dark; night no
+# The bubble before pairing: allowing "Display over other apps" alone brings it up (it
+# used to need a paired laptop, because it lives in the receiving service).
+mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW allow; app 3
+expect 20 'bubble shown' "bubble appears before pairing, once the permission is allowed"
+shot 01b-bubble-unpaired
+mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW deny; app 3
+expect 15 'bubble hidden' "…and goes when the permission is taken away"
 
 # ---------------------------------------------------------------- 2. laptop program + pairing
 ./bin/lanshare -data "$LAPTOP_DATA" -port 47900 -name DESKTOP-NIKHIL -no-window -pairing-file "$WORK/pair.json" > "$OUT/laptop-stdout.log" 2>&1 &
