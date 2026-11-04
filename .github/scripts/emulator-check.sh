@@ -74,7 +74,8 @@ tap_logged() {
   A shell input tap "${xy%,*}" "${xy#*,}"
 }
 # Restart the app and wait until it's ready to receive again.
-app_ready() { mark; app 2; until_ok 30 "seen 'receiving on port'" || log "note  receiving didn't come back in 30 s"; }
+app_ready() { mark; app 2; until_ok 30 "seen 'receiving on port'" || log "note  receiving didn't come back in 30 s"
+              sleep 2; until_ok 30 "state | grep -q '\"status\":\"online\"'" || log "note  the laptop doesn't see the phone online"; }
 screen_has() { A shell rm -f /sdcard/ui.xml; A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A shell cat /sdcard/ui.xml 2>/dev/null | grep -q "$1"; }
 
 cleanup() {
@@ -156,7 +157,10 @@ get "/api/remote/list?device=$DEV&folder=downloads&path=" | grep -q '"Projects"'
   && pass "laptop made a new folder on the phone" || fail "new folder on the phone ($(cat "$WORK/mkdir.json"))"
 hook demo.txt ask_on; app_ready
 head -c 90000 /dev/urandom > "$WORK/Contract.pdf"
-( timeout 70 ./bin/lanshare -data "$LAPTOP_DATA" -folder downloads send "$WORK/Contract.pdf" > "$OUT/send-ask.log" 2>&1 & )
+( for _ in 1 2 3 4; do
+    timeout 70 ./bin/lanshare -data "$LAPTOP_DATA" -folder downloads send "$WORK/Contract.pdf" >> "$OUT/send-ask.log" 2>&1 && break
+    grep -q "no phone online" "$OUT/send-ask.log" || break; sleep 5
+  done & )
 expect 20 'approval: asking about Contract.pdf' "phone asks before receiving"
 shot 05b-asking
 until_ok 10 "tap_logged Accept"
@@ -206,7 +210,8 @@ if until_ok 40 "seen 'row: Downloads'"; then
     until_ok 10 "! ls '$HOME/Downloads' | grep -q 'Big video'" && pass "cancel leaves nothing on the laptop" \
       || fail "cancel leaves nothing on the laptop ($(ls "$HOME/Downloads" | tr '\n' ' '))"
     until_ok 10 "tap_logged Retry"
-    until_ok 90 "[ \"\$(stat -c %s '$HOME/Downloads/Big video.mp4' 2>/dev/null)\" = 209715200 ]" \
+    expect 20 'continuing Big video.mp4 from [0-9]' "retry continues where it stopped (doesn't start over)"
+    until_ok 180 "[ \"\$(stat -c %s '$HOME/Downloads/Big video.mp4' 2>/dev/null)\" = 209715200 ]" \
       && pass "retry sends it again, intact size" || fail "retry sends it again"
   else
     fail "big transfer started"

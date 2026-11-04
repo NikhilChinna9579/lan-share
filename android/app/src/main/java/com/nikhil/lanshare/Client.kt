@@ -220,6 +220,7 @@ object Client {
             // The laptop may already have part of a big file from an interrupted try.
             val off = answer.optJSONArray("offsets")
             val offsets = LongArray(items.size) { off?.optLong(it, 0) ?: 0 }
+            items.forEachIndexed { i, it -> if (offsets[i] > 0) android.util.Log.i("LanShare", "continuing ${it.name} from ${formatSize(offsets[i])}") }
             Transfer.stream(conn, items, offsets, progress)
             val saved = conn.expect("transfer_done").getJSONArray("saved")
             (0 until saved.length()).map { saved.getString(it) }
