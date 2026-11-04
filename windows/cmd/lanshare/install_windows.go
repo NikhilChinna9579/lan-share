@@ -78,9 +78,11 @@ func uninstall(dataDir string, removeData bool) error {
 	// to let go of the files.
 	dir := installDir()
 	script := `for /l %i in (1,1,30) do @(ping -n 2 127.0.0.1 >nul & rmdir /s /q "` + dir + `" 2>nul & if not exist "` + dir + `" exit /b 0)`
-	cmd := exec.Command("cmd", "/c", script)
+	cmd := exec.Command("cmd")
 	cmd.Dir = os.TempDir()
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	// The command line is given raw: Go would escape the quotes as \" for C programs,
+	// which cmd.exe doesn't understand, and the folder would never be deleted.
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CmdLine: `cmd /d /c ` + script}
 	return cmd.Start()
 }
 
