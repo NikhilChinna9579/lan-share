@@ -112,6 +112,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
         if (!hooksRan) {
             hooksRan = true
             ui { runTestHooks() } // after the screen is fully up
@@ -427,7 +428,7 @@ class MainActivity : Activity() {
     private var foldersSheet: Sheet? = null
 
     private fun showSharedFolders(firstTime: Boolean) {
-        val sheet = Sheet(this, "Shared folders",
+        val sheet = Sheet(this, if (firstTime) "Shared folders" else "Settings",
             if (firstTime) "Choose which folders your laptops can save into. You can change this any time with ⚙."
             else "Your laptops can save into these folders, and nothing else on this phone.")
         foldersSheet = sheet
@@ -456,6 +457,18 @@ class MainActivity : Activity() {
         sheet.add(Sheet.Row(R.drawable.ic_add, "Add a folder…", sub = "Any folder you choose, e.g. on your SD card", dismiss = false) {
             @Suppress("DEPRECATION")
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQUEST_TREE)
+        })
+        // Battery saving can pause the app, so laptops see the phone as offline.
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        val unrestricted = pm.isIgnoringBatteryOptimizations(packageName)
+        sheet.add(Sheet.Row(R.drawable.ic_shield, "Stay reachable in the background",
+            sub = if (unrestricted) "On: laptops can always send to this phone" else "Tap to let laptops reach this phone while it's idle",
+            chip = if (unrestricted) "On" else null, enabled = !unrestricted, dismiss = false) {
+            runCatching {
+                @android.annotation.SuppressLint("BatteryLife")
+                val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+                startActivity(i)
+            }.onFailure { startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
         })
     }
 

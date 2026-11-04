@@ -157,6 +157,7 @@ night yes; app 10; shot 09-devices-dark; night no
 hook demo.txt receiving; app 4; shot 10-receiving
 hook demo.txt sheet;     app 4; shot 11-subfolder-sheet
 hook demo.txt folders;   app 4; shot 12-shared-folders
+until_ok 10 "screen_has 'Stay reachable'" && pass "settings offer 'stay reachable'" || fail "settings offer 'stay reachable'"
 night yes; hook demo.txt folders; app 4; shot 12-shared-folders-dark; night no
 
 # ---------------------------------------------------------------- 6. firewall-like one-way problem
@@ -170,7 +171,19 @@ until_ok 40 "screen_has \"Can't connect to it\"" && pass "phone explains one-way
 shot 13-one-way
 until_ok 20 "state | grep -q '\"cantReachUs\":true'" && pass "laptop shows the firewall warning" || fail "laptop shows the firewall warning"
 
-# ---------------------------------------------------------------- 7. no crashes
+# ---------------------------------------------------------------- 7. receiving restarts after a phone restart
+# Simulate the "phone finished starting up" signal (needs adb root, available on emulators).
+A shell am force-stop $PKG
+if timeout 30 adb root >/dev/null 2>&1; then
+  sleep 3; timeout 60 adb wait-for-device
+  A shell am broadcast -a android.intent.action.BOOT_COMPLETED -p $PKG -f 32 >/dev/null
+  until_ok 20 "A shell dumpsys activity services $PKG | grep -q ReceiveService" \
+    && pass "receiving starts by itself after a phone restart" || fail "receiving starts by itself after a phone restart"
+else
+  log "skip  restart check (no adb root here)"
+fi
+
+# ---------------------------------------------------------------- 8. no crashes
 A logcat -d -b crash > "$OUT/crashes.txt" 2>&1
 if grep -q "com.nikhil.lanshare" "$OUT/crashes.txt"; then fail "app crashed (see crashes.txt)"; else pass "no crashes"; fi
 

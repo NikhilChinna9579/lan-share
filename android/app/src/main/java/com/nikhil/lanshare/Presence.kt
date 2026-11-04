@@ -86,6 +86,7 @@ class Presence(private val ctx: Context, private val myName: String, private val
         discovered[d.id]?.let { candidates += it }
         statuses[d.id]?.host?.let { candidates += it to d.port }
         if (d.host.isNotEmpty()) candidates += d.host to d.port
+        Hub.inboundHost(d.id)?.let { candidates += it to d.port } // last: just a hint
         for ((host, port) in candidates) {
             if (Client.ping(d, host, port, myName)) {
                 Hub.reached(d.id, true)

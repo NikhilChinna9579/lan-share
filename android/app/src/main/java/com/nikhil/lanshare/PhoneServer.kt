@@ -65,8 +65,9 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
         val peerId = Identity.fingerprintOf(s.session.peerCertificates[0] as X509Certificate)
         val peer = DeviceStore.get(ctx, peerId) ?: return
         Hub.inboundContact(peerId)
-        // A laptop that reaches us is at that IP right now: a free hint for its address.
-        s.inetAddress?.hostAddress?.let { DeviceStore.updateAddress(ctx, peerId, it, peer.port) }
+        // Where the laptop connected from is only a hint (it may be a VPN or virtual
+        // adapter address we can't reach). Presence tries it, and saves it only if it works.
+        s.inetAddress?.hostAddress?.let { Hub.inboundFrom(peerId, it) }
         val conn = PeerConnection(s)
         val hello = conn.expect("hello")
         if (hello.optInt("v") != Protocol.VERSION) {

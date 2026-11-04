@@ -116,6 +116,10 @@ object Hub {
 
     fun lastInbound(id: String): Long = inbound[id] ?: 0
 
+    private val inboundHost = ConcurrentHashMap<String, String>()
+    fun inboundFrom(id: String, host: String) { inboundHost[id] = host }
+    fun inboundHost(id: String): String? = inboundHost[id]
+
     private val failStreak = ConcurrentHashMap<String, Int>()
 
     fun reached(id: String, ok: Boolean) {
