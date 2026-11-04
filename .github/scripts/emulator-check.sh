@@ -47,6 +47,22 @@ get()  { timeout 20 curl -s -H "X-Token: $(inst token)" "http://127.0.0.1:$(inst
 state(){ get /api/state; }
 
 # Tap the on-screen element whose text (or resource id) contains $1.
+# Long-press the element whose text contains $1 (e.g. a device row, to forget it).
+long_press_text() {
+  shade_closed
+  A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1 || return 1
+  local xy
+  xy=$(python3 - "$1" "$WORK/ui.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+for n in ET.parse(sys.argv[2]).iter("node"):
+    if sys.argv[1] in (n.get("text") or ""):
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds"))); print((x1 + x2) // 2, (y1 + y2) // 2); break
+PY
+)
+  [ -n "$xy" ] || return 1
+  A shell input swipe $xy $xy 900
+}
 tap_text() {
   shade_closed
   A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
@@ -292,9 +308,54 @@ else
 fi
 bail_if_crashed "phone to phone"
 
+# ---------------------------------------------------------------- 8c. "Hey Jarvis" wake word
+# The real models and TensorFlow Lite on the phone, fed recordings (the emulator has no
+# microphone): "hey jarvis" must score high, similar-sounding phrases low.
+A shell "run-as $PKG mkdir -p files/wav"
+for f in .github/testdata/*.wav; do
+  b=$(basename "$f"); A push "$f" "/data/local/tmp/$b" >/dev/null; A shell chmod 644 "/data/local/tmp/$b"
+  A shell "run-as $PKG cp /data/local/tmp/$b files/wav/$b"
+done
+mark; hook demo.txt wake_files; app 3
+expect 60 'wake test: jarvis_a.wav score (0\.[5-9]|1\.)' "“Hey Jarvis” is recognised"
+expect 10 'wake test: neg_travis.wav score 0\.[0-4]' "no false alarm on “hey travis”"
+expect 10 'wake test: neg_send.wav score 0\.[0-4]' "no false alarm on ordinary speech"
+A shell pm grant $PKG android.permission.RECORD_AUDIO 2>/dev/null
+mark; hook demo.txt wake_on; app 4
+expect 30 'wake word: (listening|microphone unavailable)' "listening for “Hey Jarvis” starts in the background"
+mark; hook demo.txt wake_off; app 3
+expect 15 'wake word: off' "turning it off stops listening"
+bail_if_crashed "wake word"
+
+# ---------------------------------------------------------------- 8d. the phone's own "Get files" screen
+head -c 50000 /dev/urandom > "$HOME/Documents/Plan.pdf"
+mark; hook demo.txt get_sheet; app 4
+if until_ok 30 "seen 'row: Documents'"; then
+  until_ok 10 "tap_text Documents"
+  until_ok 20 "seen 'row: Plan.pdf'" && until_ok 10 "tap_text Plan.pdf"
+  until_ok 10 "tap_text 'Get Plan.pdf'"
+  until_ok 30 "[ \"\$(phone_size '/sdcard/Download/Plan.pdf')\" = 50000 ]" \
+    && pass "phone browsed the laptop, ticked a file and got it" || fail "phone's Get files screen"
+else
+  fail "Get files screen lists the laptop's folders"
+fi
+
+# ---------------------------------------------------------------- 8e. renames show up on the other side
+mark; hook demo.txt "rename:Nikhil's Pixel"; app 4
+until_ok 40 "state | grep -q \"Nikhil's Pixel\"" && pass "phone renamed: the laptop shows the new name" || fail "phone rename reached the laptop"
+mark; api /api/settings '{"name":"NIKHIL-PC"}' >/dev/null
+expect 40 'presence: .* is now called NIKHIL-PC' "laptop renamed: the phone shows the new name"
+api /api/settings '{"name":"DESKTOP-NIKHIL"}' >/dev/null
+hook demo.txt "rename:"; app 3   # back to the phone's own name
+bail_if_crashed "renames"
+
 # ---------------------------------------------------------------- 9. screens with test data
 hook demo.txt add_offline; app 8; shot 09-devices-light
 night yes; app 8; shot 09-devices-dark; night no
+# Forget a laptop on the phone (long-press it).
+mark; app 6
+until_ok 10 "long_press_text 'Office PC'" && until_ok 10 "tap_text Forget"
+expect 10 'forgot Office PC' "forgetting a laptop on the phone"
 hook demo.txt receiving; app 4; shot 10-receiving
 hook demo.txt sheet;     app 4; shot 11-subfolder-sheet
 mark; hook demo.txt folders; app 4; shot 12-shared-folders

@@ -112,6 +112,8 @@ class AssistantActivity : Activity() {
         presence = Presence(this, myName) { ui { renderDevices(); if (statusMode) status(null) } }
         idle()
         renderDevices()
+        // Opened by "Hey Jarvis": start listening at once.
+        if (intent.getBooleanExtra("listen", false)) main.postDelayed({ listen() }, 300)
         // Debug builds: tests pass a sentence instead of speaking it.
         val say = intent.getStringExtra("say")
         if (say != null && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) main.postDelayed({ handle(say) }, 600)
@@ -121,6 +123,8 @@ class AssistantActivity : Activity() {
         super.onStart()
         Bubble.hiddenForAssistant = true
         Bubble.update()
+        open = true
+        ReceiveService.refresh(this) // "Hey Jarvis" listening pauses while we're open
         Hub.listen(onHub)
         presence.start()
     }
@@ -128,6 +132,8 @@ class AssistantActivity : Activity() {
     override fun onStop() {
         Bubble.hiddenForAssistant = false
         Bubble.update()
+        open = false
+        ReceiveService.refresh(this) // and resumes
         Hub.unlisten(onHub)
         presence.stop()
         stopListening()
@@ -600,5 +606,7 @@ class AssistantActivity : Activity() {
 
     companion object {
         private const val TAG = "LanShare"
+        /** True while the assistant is on screen (the wake word listener steps aside). */
+        @Volatile var open = false
     }
 }

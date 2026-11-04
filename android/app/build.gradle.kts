@@ -13,7 +13,12 @@ android {
         targetSdk = 35
         versionCode = 5
         versionName = "0.5.0"
+        // Phones (64- and 32-bit ARM) and the x86_64 emulator: keeps the wake word engine small.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
+
+    // The wake word models are memory-mapped straight from the APK.
+    androidResources { noCompress += "tflite" }
 
     signingConfigs {
         // A fixed debug key (committed on purpose; it protects nothing) so each new CI
@@ -60,6 +65,8 @@ dependencies {
     // Google's QR scanner UI, provided by Play services: no camera permission needed
     // and almost nothing added to our APK.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // "Hey Jarvis": openWakeWord models run with TensorFlow Lite (free, open source, offline).
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
     // Unit tests of the command parser, run on the build machine (no emulator needed).
     testImplementation("junit:junit:4.13.2")
 }

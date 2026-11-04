@@ -208,6 +208,10 @@ func (s *Server) handle(c *tls.Conn) {
 	if err := protocol.WriteFrame(conn, protocol.Hello{Type: "hello", V: protocol.Version, Name: s.Name, Platform: s.platform()}); err != nil {
 		return
 	}
+	if trusted && hello.Name != "" && hello.Name != peer.Name { // renamed on that device
+		s.Trust.SetName(peerID, hello.Name)
+		peer.Name = hello.Name
+	}
 
 	for {
 		typ, raw, err := protocol.ReadFrame(conn)

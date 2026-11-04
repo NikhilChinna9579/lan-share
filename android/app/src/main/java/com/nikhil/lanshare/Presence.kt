@@ -95,7 +95,13 @@ class Presence(private val ctx: Context, private val myName: String, private val
         if (d.host.isNotEmpty()) candidates += d.host to d.port
         Hub.inboundHost(d.id)?.let { candidates += it to d.port } // last: just a hint
         for ((host, port) in candidates) {
-            if (Client.ping(d, host, port, myName)) {
+            val name = Client.pingName(d, host, port, myName)
+            if (name != null) {
+                if (name.isNotBlank() && name != d.name) { // renamed on that device
+                    DeviceStore.get(ctx, d.id)?.let { DeviceStore.put(ctx, it.copy(name = name)) }
+                    android.util.Log.i("LanShare", "presence: ${d.name} is now called $name")
+                    main.post(onChange)
+                }
                 Hub.reached(d.id, true)
                 DeviceStore.updateAddress(ctx, d.id, host, port)
                 misses[d.id] = 0

@@ -11,6 +11,7 @@
     <!-- The floating assistant bubble and its microphone. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Staying ready to receive from laptops while the app is closed. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -85,7 +86,7 @@
         <service
             android:name=".ReceiveService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Receives files sent by the user's own paired computers on the local Wi-Fi network" />

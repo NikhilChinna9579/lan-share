@@ -77,6 +77,10 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
             return
         }
         conn.send(conn.hello(myName))
+        val theirName = hello.optString("name")
+        if (peer != null && theirName.isNotBlank() && theirName != peer.name) { // renamed on that device
+            peer = peer.copy(name = theirName).also { DeviceStore.put(ctx, it) }
+        }
         while (true) {
             val msg = try {
                 conn.receive()

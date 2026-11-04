@@ -43,11 +43,8 @@ class ReceiveService : Service() {
             .setContentIntent(openApp())
             .setOngoing(true)
             .build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(ID_READY, ready, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(ID_READY, ready)
-        }
+        readyNote = ready
+        foreground(false)
         running = true
         Hub.changed() // the app's "Ready to receive" updates right away
         Bubble.current = Bubble(this).also { it.refresh() }
@@ -66,16 +63,65 @@ class ReceiveService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (DeviceStore.all(this).isEmpty() && !PhonePairing.open()) stopSelf()
         Bubble.current?.refresh() // the bubble setting or permission may have changed
+        updateWake()
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
+        wake?.stop()
+        wake = null
         Bubble.current?.hide()
         Bubble.current = null
         registration?.let { runCatching { getSystemService(NsdManager::class.java).unregisterService(it) } }
         server?.stop()
         super.onDestroy()
+    }
+
+    private var readyNote: Notification? = null
+    private var wake: WakeListener? = null
+
+    /** Foreground, with the microphone type only while "Hey Jarvis" is listening. */
+    private fun foreground(mic: Boolean): Boolean {
+        val n = readyNote ?: return false
+        return runCatching {
+            when {
+                Build.VERSION.SDK_INT >= 34 -> startForeground(ID_READY, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                    (if (mic) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0))
+                mic -> startForeground(ID_READY, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                else -> startForeground(ID_READY, n)
+            }
+        }.onFailure { android.util.Log.w("LanShare", "foreground (mic=$mic): $it") }.isSuccess
+    }
+
+    /** Starts or stops listening for "Hey Jarvis" to match the setting. */
+    private fun updateWake() {
+        if (WakeWord.canListen(this)) {
+            if (wake != null) { wake?.paused = AssistantActivity.open; return }
+            // Android allows the microphone in the background only if we start it while the app is open.
+            if (!foreground(true)) return
+            wake = WakeListener(this) { openAssistant() }.also { it.start() }
+        } else if (wake != null) {
+            wake?.stop()
+            wake = null
+            foreground(false)
+            android.util.Log.i("LanShare", "wake word: off")
+        }
+    }
+
+    private fun openAssistant() {
+        val i = Intent(this, AssistantActivity::class.java).putExtra("listen", true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        runCatching { startActivity(i) }.onFailure {
+            // Without "Display over other apps" Android may not let us open a screen from the
+            // background: offer it as a notification instead.
+            val pi = PendingIntent.getActivity(this, 7, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val n = Notification.Builder(this, CH_RECEIVED).setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle("Yes? Tap to talk to LAN Share").setContentIntent(pi).setAutoCancel(true)
+                .setTimeoutAfter(15_000).build()
+            runCatching { getSystemService(NotificationManager::class.java).notify(9, n) }
+            wake?.paused = false
+        }
     }
 
     /** Tells laptops on the Wi-Fi where to find this phone (PROTOCOL.md §2). */
@@ -117,6 +163,9 @@ class ReceiveService : Service() {
         }
 
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, ReceiveService::class.java))
+
+        /** Re-reads settings (bubble, "Hey Jarvis"). */
+        fun refresh(ctx: Context) = start(ctx)
 
         /** Starts over, e.g. to announce a new name on the Wi-Fi. */
         fun restart(ctx: Context) { stop(ctx); start(ctx) }

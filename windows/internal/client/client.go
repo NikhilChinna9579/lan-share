@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -225,6 +226,11 @@ func (c *Conn) SendItems(transferID, folderKey, subPath string, items []Item, pr
 	switch typ {
 	case "file_accept":
 		json.Unmarshal(raw, &accept) // may say how much of each file it already has
+		for i, off := range accept.Offsets {
+			if off > 0 && i < len(items) {
+				log.Printf("continuing %s from %d bytes (kept from an interrupted try)", filepath.Base(items[i].Path), off)
+			}
+		}
 	case "file_reject":
 		json.Unmarshal(raw, &reject)
 		if reject.Reason == "declined" {

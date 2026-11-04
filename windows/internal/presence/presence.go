@@ -210,6 +210,7 @@ func (t *Tracker) tryDevice(id string) (string, bool) {
 		reach, err := c.PingInfo()
 		c.Close()
 		if err == nil {
+			t.Trust.SetName(id, c.PeerName) // it may have been renamed
 			t.update(id, Online, addr)
 			t.setReach(id, reach != nil && !*reach)
 			t.Trust.SetAddr(id, addr)

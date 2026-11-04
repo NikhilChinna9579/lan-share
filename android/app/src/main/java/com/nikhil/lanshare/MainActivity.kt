@@ -555,6 +555,7 @@ class MainActivity : Activity() {
             .setMessage("It won't be able to send to this phone, and you'll need to scan its QR code again to pair.")
             .setPositiveButton("Forget") { _, _ ->
                 DeviceStore.remove(this, d.id)
+                Log.i(TAG, "forgot ${d.name}")
                 if (DeviceStore.all(this).isEmpty()) ReceiveService.stop(this)
                 render()
             }
@@ -640,6 +641,22 @@ class MainActivity : Activity() {
                 }
                 ReceiveService.start(this)
             }
+            fillSharedFolders(sheet)
+        })
+        // "Hey Jarvis" opens the assistant without touching the phone.
+        val wake = WakeWord.canListen(this)
+        sheet.add(Sheet.Row(R.drawable.ic_mic, "Say “Hey Jarvis” to open the assistant",
+            sub = if (wake) "On: listening on this phone only; uses some battery" else "Hands-free; works offline, nothing leaves the phone",
+            trail = if (wake) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+            if (wake) {
+                WakeWord.setEnabled(this, false)
+            } else {
+                WakeWord.setEnabled(this, true)
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MIC)
+                }
+            }
+            ReceiveService.refresh(this)
             fillSharedFolders(sheet)
         })
         // Photos, videos and music in the standard folders are only visible with permission.
@@ -953,6 +970,7 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_MEDIA) foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
+        if (requestCode == REQUEST_MIC) { ReceiveService.refresh(this); foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }
     }
 
     private fun askNotificationPermission() {
@@ -985,6 +1003,13 @@ class MainActivity : Activity() {
                 startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", mode.removePrefix("say:")))
                 return@let
             }
+            if (mode.startsWith("rename:")) {
+                Prefs.setName(this, mode.removePrefix("rename:"))
+                ReceiveService.restart(this)
+                Log.i(TAG, "renamed this phone to ${mode.removePrefix("rename:")}")
+                return@let
+            }
+            if (mode == "get_sheet") { getFiles(d); return@let }
             if (mode.startsWith("pair_phone:")) { // pair_phone:host:port:id:code
                 val (_, host, port, id, code) = mode.split(":")
                 pairPhone(Presence.Nearby(id, "Test phone", host, port.toInt(), "android"), code)
@@ -1001,6 +1026,15 @@ class MainActivity : Activity() {
                     val code = PhonePairing.start()
                     ReceiveService.start(this)
                     Log.i(TAG, "phone pairing open: code $code id ${Identity.fingerprint}")
+                }
+                "wake_on" -> { WakeWord.setEnabled(this, true); ReceiveService.refresh(this) }
+                "wake_off" -> { WakeWord.setEnabled(this, false); ReceiveService.refresh(this) }
+                "wake_files" -> worker.execute {
+                    // Recordings pushed by the test: each one's best "hey jarvis" score.
+                    File(filesDir, "wav").listFiles()?.sortedBy { it.name }?.forEach { f ->
+                        val score = runCatching { WakeWord.scoreWav(this, f.readBytes()) }.getOrElse { -1f }
+                        Log.i(TAG, "wake test: ${f.name} score ${"%.3f".format(score)}")
+                    }
                 }
                 "ask_on" -> Approvals.setEnabled(this, true)
                 "ask_off" -> Approvals.setEnabled(this, false)
@@ -1057,6 +1091,7 @@ class MainActivity : Activity() {
         private const val REQUEST_TREE = 3
         private const val REQUEST_MEDIA = 4
         private const val REQUEST_SEND_TREE = 6
+        private const val REQUEST_MIC = 7
         private val PAIR_TICK = Any()
     }
 }

@@ -195,6 +195,24 @@ async function step(name, fn) {
       await page.getByText(/Sending Big video\.mp4/).waitFor();
       await waitFor("retried file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 16 * 1024 * 1024, 20_000);
       await page.getByText(/Sent Big video\.mp4 to Nikhil's phone/).first().waitFor();
+      // The retry continued from what the phone kept, instead of starting over.
+      if (!/continuing Big video\.mp4 from [1-9]\d* bytes/.test(fs.readFileSync(path.join(out, "laptop.log"), "utf8")))
+        throw new Error("retry started over instead of continuing");
+    });
+
+    await step("drag and drop a file onto the window opens the send sheet", async () => {
+      await page.evaluate(() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array(70_000)], "Dropped notes.txt", { type: "text/plain" }));
+        for (const type of ["dragenter", "dragover", "drop"]) {
+          window.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+        }
+      });
+      await page.locator(".sheet .r", { hasText: "Dropped notes.txt" }).waitFor();
+      await page.locator('[data-act="root"]', { hasText: "Downloads" }).click();
+      await page.locator('[data-act="dosend"]').click();
+      const dest = path.join(phoneInbox, "Dropped notes.txt");
+      await waitFor("dropped file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 70_000, 15_000);
     });
 
     await step("get a file from the phone (browse its folder, tick, Get)", async () => {
@@ -329,10 +347,30 @@ async function step(name, fn) {
       await settle(); await page.screenshot({ path: path.join(out, "w11-firewall.png") });
     });
 
+    await step("a phone renamed on the phone shows its new name here", async () => {
+      for (const p of procs.slice(1)) p.kill("SIGKILL");
+      await sleep(300);
+      procs.push(start("phone-renamed", fakephone, ["-data", phoneData, "-name", "Nikhil's Pixel", "-port", "47821"]));
+      await page.locator(".dev .t1", { hasText: "Nikhil's Pixel" }).waitFor({ timeout: 20_000 });
+    });
+
     await step("phone going away shows offline", async () => {
       for (const p of procs.slice(1)) p.kill("SIGKILL");
       await page.getByText(/^Offline/).first().waitFor({ timeout: 25_000 });
       await settle(); await page.screenshot({ path: path.join(out, "w12-offline.png") });
+    });
+
+    await step("forget a phone: it's gone, and can't connect any more", async () => {
+      await page.locator('.dev [data-act="devmenu"]').first().click();
+      await page.locator('[data-act="forget"]').click();
+      await page.locator('[data-act="confirmok"]').click();
+      await page.getByText("Pair your phone").waitFor();
+      // The forgotten phone is refused now.
+      const f = path.join(work, "After forget.txt");
+      fs.writeFileSync(f, "x");
+      procs.push(start("phone-forgotten", fakephone, ["-data", phoneData, "-name", "Nikhil's Pixel", "-port", "47851", "-send", f]));
+      await waitFor("refused", () => /send: .*(bad certificate|not_trusted)|sent to .*: \[\] .+/.test(fs.readFileSync(path.join(out, "phone-forgotten.log"), "utf8")), 15_000);
+      if (fs.existsSync(path.join(laptopDownloads, "After forget.txt"))) throw new Error("a forgotten phone could still send");
     });
 
     await step("log file has the story", async () => {

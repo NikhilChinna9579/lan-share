@@ -67,12 +67,16 @@ object Client {
         }
 
     /** True if the device answers a ping at [host]:[port] with the right key. */
-    fun ping(device: Device, host: String, port: Int, myName: String): Boolean = runCatching {
+    fun ping(device: Device, host: String, port: Int, myName: String): Boolean = pingName(device, host, port, myName) != null
+
+    /** Like [ping]; returns the name the device gives now (it may have been renamed), or null. */
+    fun pingName(device: Device, host: String, port: Int, myName: String): String? = runCatching {
         PeerConnection.open(host, port, device.id, myName, connectTimeoutMs = 1_500).use { conn ->
             conn.send(JSONObject().put("type", "ping"))
             conn.expect("pong")
+            conn.peerName
         }
-    }.isSuccess
+    }.getOrNull()
 
     /** Asks which folders the laptop offers. Returns (default key, folders). */
     fun list(device: Device, myName: String, folderKey: String, path: String): List<String> =

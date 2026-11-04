@@ -77,6 +77,19 @@ func (s *Store) SetAddr(id, addr string) error {
 }
 
 // Remove forgets a device: it can no longer connect (PROTOCOL.md, revocation).
+// SetName records a paired device's new name (it was renamed on that device).
+func (s *Store) SetName(id, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.devices[id]
+	if !ok || name == "" || d.Name == name {
+		return nil
+	}
+	d.Name = name
+	s.devices[id] = d
+	return s.save()
+}
+
 func (s *Store) Remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
