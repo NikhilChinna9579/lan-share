@@ -221,8 +221,10 @@ func (c *Conn) SendItems(transferID, folderKey, subPath string, items []Item, pr
 	if err != nil {
 		return nil, err
 	}
+	var accept protocol.FileAccept
 	switch typ {
 	case "file_accept":
+		json.Unmarshal(raw, &accept) // may say how much of each file it already has
 	case "file_reject":
 		json.Unmarshal(raw, &reject)
 		if reject.Reason == "declined" {
@@ -237,7 +239,7 @@ func (c *Conn) SendItems(transferID, folderKey, subPath string, items []Item, pr
 	for i := range paths {
 		sizes[i] = offer.Files[i].Size
 	}
-	if err := transfer.Stream(&deadlineConn{c.c}, paths, sizes, progress); err != nil {
+	if err := transfer.StreamFrom(&deadlineConn{c.c}, paths, sizes, accept.Offsets, progress); err != nil {
 		return nil, err
 	}
 	var done protocol.TransferDone

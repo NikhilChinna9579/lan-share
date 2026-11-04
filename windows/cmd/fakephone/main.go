@@ -86,7 +86,7 @@ func main() {
 			}
 		}()
 	}
-	srv := &server.Server{Name: *name, Identity: id, Trust: ts, Folders: folders, OnEvent: func(e server.Event) {
+	srv := &server.Server{Name: *name, Identity: id, Trust: ts, Folders: folders, PartialDir: filepath.Join(*data, "partial"), OnEvent: func(e server.Event) {
 		if e.Kind == server.EventReceived {
 			log.Printf("received %s (%d bytes) from %s", e.Path, e.Bytes, e.Device)
 		}

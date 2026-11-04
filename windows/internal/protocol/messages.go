@@ -83,6 +83,9 @@ type ListResponse struct {
 type FileAccept struct {
 	Type       string `json:"type"` // "file_accept"
 	TransferID string `json:"transfer_id"`
+	// Offsets (optional), one per file: bytes the receiver already has from an
+	// interrupted try. The sender continues each file from there.
+	Offsets []int64 `json:"offsets,omitempty"`
 }
 
 type FileReject struct {

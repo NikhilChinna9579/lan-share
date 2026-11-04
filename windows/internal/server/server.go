@@ -13,6 +13,8 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -72,6 +74,9 @@ type Server struct {
 	ReportReach *bool
 	// Throttle (testing) limits how fast files are received, in bytes per second.
 	Throttle int64
+	// PartialDir, if set, keeps big unfinished files (in the app's own folder) so the
+	// sender's retry continues where it stopped.
+	PartialDir string
 	// AllowBrowse, if set and returning false, refuses listing and fetching files
 	// (a paired device can still send here).
 	AllowBrowse func() bool
@@ -85,6 +90,7 @@ type Server struct {
 	pairFails  int
 	contacts   map[string]time.Time
 	active     map[string]net.Conn // transfer id → its connection, while receiving
+	cancelled  map[string]bool     // transfers this side cancelled (their partial files go)
 }
 
 func (s *Server) track(id string, c net.Conn) {
@@ -104,6 +110,10 @@ func (s *Server) track(id string, c net.Conn) {
 // received files are deleted (as for any interrupted transfer).
 func (s *Server) Cancel(transferID string) {
 	s.mu.Lock()
+	if s.cancelled == nil {
+		s.cancelled = map[string]bool{}
+	}
+	s.cancelled[transferID] = true
 	c := s.active[transferID]
 	s.mu.Unlock()
 	if c != nil {
@@ -386,14 +396,48 @@ func (s *Server) receive(conn io.ReadWriter, peerID, from string, offer protocol
 			return reject("bad_name")
 		}
 	}
-	if err := protocol.WriteFrame(conn, protocol.FileAccept{Type: "file_accept", TransferID: offer.TransferID}); err != nil {
+	// Big files from an earlier, interrupted try continue where they stopped.
+	resume := make([]transfer.Resume, len(names))
+	accept := protocol.FileAccept{Type: "file_accept", TransferID: offer.TransferID}
+	resuming := false
+	for i, f := range offer.Files {
+		if s.PartialDir == "" || f.Size < transfer.MinResume {
+			continue
+		}
+		p := filepath.Join(s.PartialDir, transfer.ResumeKey(peerID, offer.Folder, offer.Path, f.Path, names[i], f.Size))
+		resume[i].Path = p
+		if st, err := os.Stat(p); err == nil && st.Size() < f.Size {
+			resume[i].Offset = st.Size()
+			resuming = resuming || st.Size() > 0
+		}
+	}
+	if resuming {
+		accept.Offsets = make([]int64, len(names))
+		for i := range resume {
+			accept.Offsets[i] = resume[i].Offset
+		}
+	}
+	if err := protocol.WriteFrame(conn, accept); err != nil {
 		return err
 	}
 	var src io.Reader = conn
 	if s.Throttle > 0 {
 		src = &slowReader{r: conn, rate: s.Throttle}
 	}
-	saved, err := transfer.Receive(conn, src, dirs, names, sizes,
+	defer func() {
+		s.mu.Lock()
+		gone := s.cancelled[offer.TransferID]
+		delete(s.cancelled, offer.TransferID)
+		s.mu.Unlock()
+		if gone { // cancelled here: nothing is kept
+			for _, r := range resume {
+				if r.Path != "" {
+					os.Remove(r.Path)
+				}
+			}
+		}
+	}()
+	saved, err := transfer.ReceiveResume(conn, src, dirs, names, sizes, resume,
 		func(done, total int64, i int) {
 			s.emit(Event{Kind: EventProgress, DeviceID: peerID, Device: from, Transfer: offer.TransferID,
 				Name: names[i], Bytes: done, Total: total, Index: i, Count: len(names)})

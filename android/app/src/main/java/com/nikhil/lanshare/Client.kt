@@ -182,7 +182,10 @@ object Client {
                 throw IllegalStateException(if (answer.optString("reason") == "declined") "${device.name} declined the files."
                     else "${device.name} refused the files (${answer.optString("reason")}).")
             }
-            Transfer.stream(conn, items, progress)
+            // The laptop may already have part of a big file from an interrupted try.
+            val off = answer.optJSONArray("offsets")
+            val offsets = LongArray(items.size) { off?.optLong(it, 0) ?: 0 }
+            Transfer.stream(conn, items, offsets, progress)
             val saved = conn.expect("transfer_done").getJSONArray("saved")
             (0 until saved.length()).map { saved.getString(it) }
         }

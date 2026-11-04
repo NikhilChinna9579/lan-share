@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.InetSocketAddress
+import java.security.MessageDigest
 import java.net.SocketException
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
@@ -154,12 +155,26 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
             }
             if (!Approvals.ask(ctx, tid, peer.name, what, sizes.sum(), label)) return reject("declined")
         }
-        conn.send(JSONObject().put("type", "file_accept").put("transfer_id", tid))
+        // Big files can be continued after a dropped connection: say how much we already have.
+        val keys = names.indices.map { i ->
+            if (sizes[i] >= 4L shl 20) MessageDigest.getInstance("SHA-256")
+                .digest("${peer.id}\u0000$folder\u0000${paths[i]}\u0000${names[i]}\u0000${sizes[i]}".toByteArray()).toHex()
+            else null
+        }
+        val offsets = keys.mapIndexed { i, k -> k?.let { SharedFolders.partialSize(ctx, folder, it).takeIf { n -> n < sizes[i] } } ?: 0L }
+        val accept = JSONObject().put("type", "file_accept").put("transfer_id", tid)
+        if (offsets.any { it > 0 }) accept.put("offsets", JSONArray(offsets))
+        conn.send(accept)
 
         val total = sizes.sum()
         val saved = try {
             var n = 0
-            Transfer.receive(conn, names, sizes, { SharedFolders.create(ctx, folder, paths[n++], it) }) { done, _, i ->
+            Transfer.receive(conn, names, sizes, {
+                val i = n++
+                val key = keys[i]
+                if (key != null) SharedFolders.createResumable(ctx, folder, paths[i], it, key, offsets[i])
+                else SharedFolders.create(ctx, folder, paths[i], it)
+            }) { done, _, i ->
                 Hub.transfer(tid, true, peer.name) {
                     it.name = names[i]; it.total = total; it.index = i + 1; it.count = names.size; it.sent = done
                     if (it.cancel == null) it.cancel = { it.cancelled = true; conn.abort() }
@@ -167,6 +182,7 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
             }
         } catch (e: Exception) {
             if (Hub.get(tid)?.cancelled == true) {
+                keys.filterNotNull().forEach { SharedFolders.dropPartial(ctx, it) } // cancelled here: keep nothing
                 Hub.transfer(tid, true, peer.name) { it.state = Hub.State.CANCELLED; it.message = "Cancelled. Nothing was kept." }
                 Hub.add("info", "Cancelled receiving from ${peer.name}", "Nothing was kept")
             } else {

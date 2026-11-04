@@ -26,6 +26,7 @@ import (
 	"github.com/NikhilChinna9579/lan-share/windows/internal/presence"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/protocol"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/server"
+	xfer "github.com/NikhilChinna9579/lan-share/windows/internal/transfer"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/trust"
 )
 
@@ -174,7 +175,8 @@ func newApp(dataDir, logPath string) (*app, error) {
 func (a *app) start() error {
 	a.srv = &server.Server{Name: a.name, Identity: a.id, Trust: a.trust, Folders: a.folders, OnEvent: a.onServerEvent,
 		AllowBrowse: func() bool { a.mu.Lock(); defer a.mu.Unlock(); return !a.settings.NoBrowse },
-		Approve:     a.approve}
+		Approve:     a.approve, PartialDir: filepath.Join(a.dataDir, "partial")}
+	go xfer.CleanPartials(a.srv.PartialDir)
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *flagPort))
 	if err != nil {
 		if ln, err = net.Listen("tcp", ":0"); err != nil { // port taken: any port; mDNS tells phones

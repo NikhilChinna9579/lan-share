@@ -106,7 +106,7 @@ and system items are not listed. A device may share folders it can't list subfol
 | Type | Direction | Fields |
 | --- | --- | --- |
 | `file_offer` | sender → receiver | `transfer_id` (UUID), `folder` (key), `path` (subfolder, optional), `files`: list of `{name, size, path?}`; a file's own `path` is its subfolder when a whole folder is sent ("Trip/Day 2") |
-| `file_accept` | receiver → sender | `transfer_id` |
+| `file_accept` | receiver → sender | `transfer_id`, `offsets` (optional): per file, bytes the receiver already has from an interrupted try |
 | `file_reject` | receiver → sender | `transfer_id`, `reason`: `declined` (the person said no, or didn't answer within 50 s), `no_space`, `bad_folder`, `bad_name` |
 | *(raw bytes)* | sender → receiver | exactly `size` bytes of the current file |
 | `file_end` | sender → receiver | `index` (int), `sha256` (hex) |
@@ -125,6 +125,14 @@ A receiver may ask its user before answering `file_offer` ("Ask before receiving
 the sender waits up to 60 s for `file_accept` / `file_reject`. Each part of a file's
 `path` is cleaned like a file name; a part that is `..` (or cleans to nothing) rejects
 the offer with `bad_name`.
+
+**Resuming.** A receiver may keep a big file (≥ 4 MB) that was cut off by a dropped
+connection, out of sight (its own private folder; on Android a hidden pending
+MediaStore item), keyed by sender, place, name and size. When the same file is offered
+again it answers with `offsets`; the sender reads those bytes only for the checksum
+and sends the rest. The checksum still covers the whole file. A transfer cancelled on
+the receiving side keeps nothing; a checksum mismatch deletes the kept part.
+Unfinished files are deleted after 3 days. Senders must honour `offsets`.
 
 ### New folder
 

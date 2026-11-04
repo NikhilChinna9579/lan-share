@@ -191,9 +191,31 @@ object SharedFolders {
 
     /** A file being received: write to [out], then [finish] or [discard]. */
     class Incoming(val uri: Uri, val mime: String, val out: OutputStream, val savedIn: String,
-                   private val ctx: Context, private val pending: Boolean) {
+                   private val ctx: Context, private val pending: Boolean,
+                   val existing: Long = 0,          // bytes already there (resuming)
+                   val resumable: Boolean = false,  // kept, hidden, if the connection drops
+                   val onDone: () -> Unit = {}) {
+        /** Feeds the bytes already saved into [md] (to check the whole file). */
+        fun readBack(md: java.security.MessageDigest) {
+            val input = ctx.contentResolver.openInputStream(uri) ?: error("Can't read back")
+            input.use {
+                val buf = ByteArray(64 * 1024)
+                var left = existing
+                while (left > 0) {
+                    val n = it.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                    if (n < 0) throw java.io.IOException("the unfinished file got shorter")
+                    md.update(buf, 0, n)
+                    left -= n
+                }
+            }
+        }
+
+        /** Keeps an unfinished file for later (it stays hidden while pending). */
+        fun keep() { runCatching { out.close() } }
+
         fun finish(): String {
             out.close()
+            onDone()
             if (pending) {
                 ctx.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
             }
@@ -201,11 +223,56 @@ object SharedFolders {
         }
 
         fun discard() {
+            onDone()
             runCatching { out.close() }
             runCatching {
                 if (pending) ctx.contentResolver.delete(uri, null, null) else DocumentsContract.deleteDocument(ctx.contentResolver, uri)
             }
         }
+    }
+
+    /**
+     * Like [create], but for a big file: continues an unfinished copy of the same file
+     * from the same laptop if one was kept, and keeps this one if the connection drops.
+     * Only for the standard folders (MediaStore keeps unfinished files hidden).
+     */
+    fun createResumable(ctx: Context, key: String, path: String, name: String, resumeKey: String, offset: Long): Incoming {
+        val root = roots(ctx).firstOrNull { it.key == key } ?: throw IllegalArgumentException("bad_folder")
+        if (root.tree != null) return create(ctx, key, path, name)
+        val store = ctx.getSharedPreferences("partials", Context.MODE_PRIVATE)
+        val forget = { store.edit().remove(resumeKey).apply() }
+        store.getString(resumeKey, null)?.let { saved ->
+            val uri = Uri.parse(saved)
+            val have = runCatching { ctx.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull() ?: -1L
+            if (offset > 0 && have == offset) { // exactly what we told the laptop we have
+                val out = runCatching { ctx.contentResolver.openOutputStream(uri, "wa") }.getOrNull()
+                val mime = mimeOf(name)
+                if (out != null) {
+                    android.util.Log.i("LanShare", "resuming $name from ${formatSize(have)}")
+                    return Incoming(uri, mime, out, (listOf(root.label) + (cleanPath(path) ?: emptyList())).joinToString("/"),
+                        ctx, pending = true, existing = have, resumable = true, onDone = forget)
+                }
+            }
+            runCatching { ctx.contentResolver.delete(uri, null, null) }
+            forget()
+        }
+        val inc = create(ctx, key, path, name)
+        store.edit().putString(resumeKey, inc.uri.toString()).apply()
+        return Incoming(inc.uri, inc.mime, inc.out, inc.savedIn, ctx, pending = true, resumable = true, onDone = forget)
+    }
+
+    /** Bytes kept of an unfinished file (0 if none, or it can't be continued here). */
+    fun partialSize(ctx: Context, folderKey: String, resumeKey: String): Long {
+        if (roots(ctx).firstOrNull { it.key == folderKey }?.tree != null) return 0
+        val saved = ctx.getSharedPreferences("partials", Context.MODE_PRIVATE).getString(resumeKey, null) ?: return 0
+        return runCatching { ctx.contentResolver.openFileDescriptor(Uri.parse(saved), "r")?.use { it.statSize } }.getOrNull() ?: 0
+    }
+
+    /** Deletes an unfinished file that was kept for later. */
+    fun dropPartial(ctx: Context, resumeKey: String) {
+        val store = ctx.getSharedPreferences("partials", Context.MODE_PRIVATE)
+        store.getString(resumeKey, null)?.let { runCatching { ctx.contentResolver.delete(Uri.parse(it), null, null) } }
+        store.edit().remove(resumeKey).apply()
     }
 
     fun create(ctx: Context, key: String, path: String, name: String): Incoming {

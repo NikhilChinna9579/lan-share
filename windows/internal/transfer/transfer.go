@@ -21,6 +21,12 @@ import (
 // Stream writes each file's bytes followed by its file_end frame.
 // progress (may be nil) gets bytes sent so far, the total, and the file index.
 func Stream(w io.Writer, paths []string, sizes []int64, progress func(sent, total int64, idx int)) error {
+	return StreamFrom(w, paths, sizes, nil, progress)
+}
+
+// StreamFrom is Stream resuming each file at offsets[i] (bytes the receiver already
+// has from an interrupted try). Those bytes are read for the checksum but not sent.
+func StreamFrom(w io.Writer, paths []string, sizes, offsets []int64, progress func(sent, total int64, idx int)) error {
 	var total, sent int64
 	for _, s := range sizes {
 		total += s
@@ -32,7 +38,14 @@ func Stream(w io.Writer, paths []string, sizes []int64, progress func(sent, tota
 			return err
 		}
 		h := sha256.New()
-		for remaining := sizes[i]; remaining > 0; {
+		if i < len(offsets) && offsets[i] > 0 && offsets[i] <= sizes[i] {
+			if _, err := io.CopyN(h, f, offsets[i]); err != nil {
+				f.Close()
+				return fmt.Errorf("%s changed while sending: %w", filepath.Base(p), err)
+			}
+			sent += offsets[i]
+		}
+		for remaining := sizes[i] - offsetOf(offsets, i); remaining > 0; {
 			n := int64(len(buf))
 			if remaining < n {
 				n = remaining
@@ -61,6 +74,24 @@ func Stream(w io.Writer, paths []string, sizes []int64, progress func(sent, tota
 	return nil
 }
 
+func offsetOf(offsets []int64, i int) int64 {
+	if i < len(offsets) && offsets[i] > 0 {
+		return offsets[i]
+	}
+	return 0
+}
+
+// Resume is where an unfinished file is kept so a later try can continue it.
+// Path "" means no resuming for that file (it is written next to its final place
+// as name.part and deleted on failure).
+type Resume struct {
+	Path   string // in the app's private folder, not the shared one
+	Offset int64  // bytes already there
+}
+
+// MinResume: smaller files simply start over.
+const MinResume = 4 << 20
+
 // Saved describes one file Receive finished.
 type Saved struct {
 	Index int
@@ -75,6 +106,14 @@ type Saved struct {
 // renamed only when their checksum matches; on any failure the .part files are
 // deleted. names must already be sanitized.
 func Receive(rw io.ReadWriter, src io.Reader, dirs []string, names []string, sizes []int64,
+	progress func(done, total int64, idx int), saved func(Saved)) ([]string, error) {
+	return ReceiveResume(rw, src, dirs, names, sizes, nil, progress, saved)
+}
+
+// ReceiveResume is Receive where file i continues from resume[i] (if set). After a
+// dropped connection those files are kept, to be continued; after a checksum
+// mismatch they're deleted.
+func ReceiveResume(rw io.ReadWriter, src io.Reader, dirs []string, names []string, sizes []int64, resume []Resume,
 	progress func(done, total int64, idx int), saved func(Saved)) ([]string, error) {
 	if src == nil {
 		src = rw
@@ -96,16 +135,44 @@ func Receive(rw io.ReadWriter, src io.Reader, dirs []string, names []string, siz
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
 		}
-		part := files.UniquePath(dir, name+".part")
-		f, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		var r Resume
+		if i < len(resume) {
+			r = resume[i]
+		}
+		h := sha256.New()
+		var part string
+		var f *os.File
+		var err error
+		if r.Path != "" {
+			part = r.Path
+			os.MkdirAll(filepath.Dir(part), 0o700)
+			f, err = os.OpenFile(part, os.O_CREATE|os.O_RDWR, 0o600)
+			if err == nil && r.Offset > 0 {
+				// The checksum covers the whole file: read back what we already have.
+				_, err = io.CopyN(h, f, r.Offset)
+			}
+			if err == nil {
+				err = f.Truncate(r.Offset)
+			}
+			if err == nil {
+				_, err = f.Seek(r.Offset, io.SeekStart)
+			}
+		} else {
+			part = files.UniquePath(dir, name+".part")
+			f, err = os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+			parts = append(parts, part)
+		}
 		if err != nil {
+			if f != nil {
+				f.Close()
+			}
 			protocol.WriteFrame(rw, protocol.Error{Type: "error", Code: "io", Message: err.Error()})
 			return nil, err
 		}
-		parts = append(parts, part)
-		h := sha256.New()
+		done += r.Offset
 		pw := &progressWriter{fn: progress, done: done, total: total, idx: i}
-		_, err = io.CopyN(io.MultiWriter(f, h, pw), src, sizes[i])
+		_, err = io.CopyN(io.MultiWriter(f, h, pw), src, sizes[i]-r.Offset)
+		done -= r.Offset
 		done += sizes[i]
 		if err == nil && progress != nil {
 			progress(done, total, i) // always report the end of each file
@@ -127,13 +194,18 @@ func Receive(rw io.ReadWriter, src io.Reader, dirs []string, names []string, siz
 		}
 		if end.SHA256 != hex.EncodeToString(h.Sum(nil)) {
 			protocol.WriteFrame(rw, protocol.Error{Type: "error", Code: "checksum"})
+			if r.Path != "" {
+				os.Remove(r.Path) // damaged: never continue from it
+			}
 			return nil, fmt.Errorf("%s: checksum mismatch", name)
 		}
 		final := files.UniquePath(dir, name)
-		if err := os.Rename(part, final); err != nil {
+		if err := moveFile(part, final); err != nil {
 			return nil, err
 		}
-		parts = parts[:len(parts)-1]
+		if r.Path == "" {
+			parts = parts[:len(parts)-1]
+		}
 		out = append(out, filepath.Base(final))
 		if saved != nil {
 			saved(Saved{Index: i, Path: final, Size: sizes[i], Took: time.Since(start)})
@@ -182,4 +254,48 @@ func Check(dir string, names []string, hidden func(dir, name string) bool) ([]st
 		paths[i], sizes[i] = p, st.Size()
 	}
 	return paths, sizes, nil
+}
+
+// moveFile renames, or copies when the two places are on different drives.
+func moveFile(from, to string) error {
+	if err := os.Rename(from, to); err == nil {
+		return nil
+	}
+	in, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(to)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(to)
+		return err
+	}
+	in.Close()
+	return os.Remove(from)
+}
+
+// ResumeKey names an unfinished file: the same file sent again by the same device
+// to the same place gets the same key.
+func ResumeKey(peerID, folder, path, rel, name string, size int64) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%d", peerID, folder, path, rel, name, size)))
+	return hex.EncodeToString(sum[:12])
+}
+
+// CleanPartials deletes unfinished files older than a few days.
+func CleanPartials(dir string) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > 72*time.Hour {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }

@@ -12,14 +12,30 @@ import java.security.MessageDigest
 object Transfer {
 
     /** Writes each file's bytes and its file_end. [progress] gets (sent, total, index). */
-    fun stream(conn: PeerConnection, items: List<Client.Outgoing>, progress: (Long, Long, Int) -> Unit) {
+    fun stream(conn: PeerConnection, items: List<Client.Outgoing>, progress: (Long, Long, Int) -> Unit) =
+        stream(conn, items, LongArray(0), progress)
+
+    /**
+     * Like [stream], continuing file i at offsets[i]: bytes the receiver already has from
+     * an interrupted try. Those are read for the checksum but not sent again.
+     */
+    fun stream(conn: PeerConnection, items: List<Client.Outgoing>, offsets: LongArray, progress: (Long, Long, Int) -> Unit) {
         val total = items.sumOf { it.size }
         var sent = 0L
         val buf = ByteArray(64 * 1024)
         items.forEachIndexed { index, item ->
             val digest = MessageDigest.getInstance("SHA-256")
-            var remaining = item.size
+            val skip = offsets.getOrElse(index) { 0L }.coerceIn(0, item.size)
+            var remaining = item.size - skip
             item.open().use { input ->
+                var left = skip
+                while (left > 0) {
+                    val n = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt())
+                    if (n < 0) throw IllegalStateException("${item.name} got shorter while sending.")
+                    digest.update(buf, 0, n)
+                    left -= n
+                }
+                sent += skip
                 while (remaining > 0) {
                     val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
                     if (n < 0) throw IllegalStateException("${item.name} got shorter while sending.")
@@ -47,12 +63,15 @@ object Transfer {
         val saved = mutableListOf<PhoneServer.Saved>()
         val buf = ByteArray(64 * 1024)
         for (i in names.indices) {
-            progress(done, total, i)
             val inc = create(names[i])
+            progress(done + inc.existing, total, i)
             var ok = false
+            var damaged = false
             try {
                 val digest = MessageDigest.getInstance("SHA-256")
-                var remaining = sizes[i]
+                if (inc.existing > 0) inc.readBack(digest) // the checksum covers the whole file
+                done += inc.existing
+                var remaining = sizes[i] - inc.existing
                 var lastUi = 0L
                 while (remaining > 0) {
                     val n = conn.input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
@@ -69,13 +88,16 @@ object Transfer {
                 }
                 val end = conn.expect("file_end")
                 if (end.optInt("index") != i || end.optString("sha256") != digest.digest().toHex()) {
+                    damaged = true
                     conn.send(JSONObject().put("type", "error").put("code", "checksum"))
                     throw IOException("the file got damaged on the way (checksum mismatch)")
                 }
                 saved += PhoneServer.Saved(inc.finish(), inc.uri, inc.mime, sizes[i], inc.savedIn)
                 ok = true
             } finally {
-                if (!ok) inc.discard() // never leave half-written files behind
+                // Never leave half-written files behind, except big ones kept (out of
+                // sight) to be continued by the sender's retry.
+                if (!ok) { if (inc.resumable && !damaged) inc.keep() else inc.discard() }
             }
         }
         progress(total, total, names.size - 1)
