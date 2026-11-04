@@ -132,7 +132,8 @@ night yes; app; shot 01-unpaired-dark; night no
 mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW allow; app 3
 expect 20 'bubble shown' "bubble appears before pairing, once the permission is allowed"
 shot 01b-bubble-unpaired
-mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW deny; app 3
+# Taken away while LAN Share runs, then back to LAN Share (as when returning from Settings).
+mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW deny; A shell am start -n $PKG/.MainActivity >/dev/null
 expect 15 'bubble hidden' "…and goes when the permission is taken away"
 
 # ---------------------------------------------------------------- 2. laptop program + pairing
