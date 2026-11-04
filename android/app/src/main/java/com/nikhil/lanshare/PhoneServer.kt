@@ -79,7 +79,9 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
         conn.send(conn.hello(myName))
         val theirName = hello.optString("name")
         if (peer != null && theirName.isNotBlank() && theirName != peer.name) { // renamed on that device
+            Log.i("LanShare", "presence: ${peer.name} is now called $theirName")
             peer = peer.copy(name = theirName).also { DeviceStore.put(ctx, it) }
+            Hub.changed()
         }
         while (true) {
             val msg = try {

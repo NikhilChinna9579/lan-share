@@ -25,9 +25,9 @@ import java.nio.channels.FileChannel
  * and synthetic recordings; see .github/testdata).
  */
 class WakeWord(ctx: Context) : AutoCloseable {
-    // The mel model's input size is only fixed after loading, which TFLite's default
-    // XNNPACK delegate can't handle ("BytesRequired ... overflowed"): load it without.
-    private val mel = Interpreter(asset(ctx, "melspectrogram.tflite"), Interpreter.Options().setUseXNNPACK(false).setNumThreads(1))
+    // The mel model ships with its input fixed at 1760 samples (openWakeWord's file leaves it
+    // open; Android's TFLite sizes tensors on load and fails on an open size).
+    private val mel = Interpreter(asset(ctx, "melspectrogram.tflite"))
     private val emb = Interpreter(asset(ctx, "embedding_model.tflite"))
     private val ww = Interpreter(asset(ctx, "hey_jarvis.tflite"))
 
@@ -44,8 +44,6 @@ class WakeWord(ctx: Context) : AutoCloseable {
     private val wwOut = arrayOf(FloatArray(1))
 
     init {
-        mel.resizeInput(0, intArrayOf(1, MEL_INPUT))
-        mel.allocateTensors()
         repeat(76) { mels.addLast(FloatArray(32) { 1f }) } // as openWakeWord starts
     }
 

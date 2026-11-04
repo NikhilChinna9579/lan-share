@@ -71,10 +71,14 @@ tap_text() {
   xy=$(python3 - "$1" "$WORK/ui.xml" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 want, path = sys.argv[1], sys.argv[2]
-for n in ET.parse(path).iter("node"):
-    # Case doesn't matter: Android shows dialog buttons in capitals ("FORGET").
-    if want.lower() in (n.get("text") or "").lower() or n.get("resource-id", "").endswith("/" + want):
-        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
+# Exact text first (case doesn't matter: Android shows dialog buttons in capitals, and a
+# title like "Forget Office PC?" must not win over the "FORGET" button), then contains.
+nodes = list(ET.parse(path).iter("node"))
+w = want.lower()
+for test in (lambda t: t == w, lambda t: w in t):
+    hit = next((n for n in nodes if test((n.get("text") or "").lower()) or n.get("resource-id", "").endswith("/" + want)), None)
+    if hit is not None:
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", hit.get("bounds")))
         print((x1 + x2) // 2, (y1 + y2) // 2); break
 PY
 )
@@ -90,6 +94,9 @@ tap_logged() {
   shade_closed
   A shell input tap "${xy%,*}" "${xy#*,}"
 }
+# Run a test hook and wait until the app has actually run it (a slow emulator can take
+# several seconds to start).
+run_hook() { mark; hook demo.txt "$1"; app 2; until_ok 30 "seen 'test hook: $1'" || log "note  hook $1 didn't run"; }
 # Restart the app and wait until it's ready to receive again.
 app_ready() { mark; app 2; until_ok 30 "seen 'receiving on port'" || log "note  receiving didn't come back in 30 s"
               sleep 2; until_ok 30 "state | grep -q '\"status\":\"online\"'" || log "note  the laptop doesn't see the phone online"; }
@@ -183,10 +190,10 @@ shot 05b-asking
 until_ok 10 "tap_logged Accept"
 expect 15 'approval: accepted Contract.pdf' "accepting on the phone"
 until_ok 20 "[ \"\$(phone_size '/sdcard/Download/Contract.pdf')\" = 90000 ]" && pass "accepted file arrived" || fail "accepted file arrived"
-hook demo.txt ask_off; app 3; hook demo.txt browse_off; app 3
+run_hook ask_off; run_hook browse_off
 get "/api/remote/list?device=$DEV&folder=downloads&path=" | grep -q "allow browsing" \
   && pass "browsing off: laptop is told no" || fail "browsing off was not enforced"
-hook demo.txt browse_on; app 3
+run_hook browse_on
 mark; hook demo.txt send_folder; app 6
 if until_ok 30 "seen 'row: Downloads'"; then
   until_ok 10 "tap_text Downloads"; sleep 2

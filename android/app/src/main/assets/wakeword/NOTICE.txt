@@ -2,6 +2,7 @@ Wake word models from openWakeWord v0.5.1 by David Scripka
 https://github.com/dscripka/openWakeWord
 
 - melspectrogram.tflite, embedding_model.tflite: Apache License 2.0
+  (melspectrogram.tflite: input shape set to [1, 1760] in the file; otherwise unchanged)
   (embedding model derived from Google's speech_embedding model)
 - hey_jarvis.tflite (hey_jarvis_v0.1): Creative Commons BY-NC-SA 4.0 — personal,
   non-commercial use. Train your own model with openWakeWord for other uses.
