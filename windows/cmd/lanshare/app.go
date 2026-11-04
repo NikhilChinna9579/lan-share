@@ -52,6 +52,7 @@ type app struct {
 	pairing   *pairing
 	pending   []fileInfo // files handed to us (Send to / drop on .exe) waiting to be sent
 	pendingN  int        // bumps each hand-off so the window knows to open the send view
+	lastSeen  map[string]presence.State
 }
 
 type activity struct {
@@ -127,7 +128,19 @@ func (a *app) start() error {
 		}
 	}
 	a.port = ln.Addr().(*net.TCPAddr).Port
-	go a.srv.Serve(ln)
+	if *flagBlockIncoming {
+		go func() { // accept and drop everything, like a blocking firewall
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				c.Close()
+			}
+		}()
+	} else {
+		go a.srv.Serve(ln)
+	}
 
 	a.host, _ = lanAddress()
 	if a.host == "" {
@@ -253,16 +266,30 @@ func (a *app) onServerEvent(e server.Event) {
 	}
 }
 
+// onPresence records only real changes in the activity list, so it reads like a story.
 func (a *app) onPresence(s presence.State) {
+	a.mu.Lock()
+	if a.lastSeen == nil {
+		a.lastSeen = map[string]presence.State{}
+	}
+	prev, known := a.lastSeen[s.ID]
+	a.lastSeen[s.ID] = s
+	a.mu.Unlock()
+	wasOnline := known && prev.Status == presence.Online
 	switch {
-	case s.Status == presence.Online && s.CantReachUs:
+	case s.Status == presence.Online && !wasOnline:
+		a.note("online", s.Name+" is online", hostOnly(s.Addr), "")
+	case s.Status == presence.Offline && wasOnline:
+		a.note("offline", s.Name+" went offline", "", "")
+	}
+	if s.Status == presence.Online && s.CantReachUs && !(known && prev.CantReachUs) {
 		a.note("error", s.Name+" can't connect to this laptop",
 			"Windows Firewall is probably blocking LAN Share. Open Settings → Allow through firewall.", "")
-	case s.Status == presence.Online:
-		a.note("online", s.Name+" is online", hostOnly(s.Addr), "")
-	case s.Status == presence.Offline:
-		a.note("offline", s.Name+" is offline", "", "")
 	}
+	if s.Status == presence.Online && !s.CantReachUs && known && prev.CantReachUs {
+		a.note("info", s.Name+" can connect to this laptop again", "", "")
+	}
+	a.hub.changed()
 }
 
 func (a *app) updateTransfer(id, dir, device string, f func(*transfer)) {

@@ -60,12 +60,13 @@ type Tracker struct {
 	DefaultPort int
 	OnChange    func(State) // called when a device's status changes
 
-	mu       sync.Mutex
-	states   map[string]*State
-	misses   map[string]int
-	mdnsAddr map[string]string
-	lastScan time.Time
-	kick     chan struct{}
+	mu         sync.Mutex
+	states     map[string]*State
+	misses     map[string]int
+	mdnsAddr   map[string]string
+	cantStreak map[string]int
+	lastScan   time.Time
+	kick       chan struct{}
 }
 
 func (t *Tracker) init() {
@@ -255,6 +256,15 @@ func (t *Tracker) update(id string, st Status, addr string) {
 
 func (t *Tracker) setReach(id string, cant bool) {
 	t.mu.Lock()
+	if t.cantStreak == nil {
+		t.cantStreak = map[string]int{}
+	}
+	if cant {
+		t.cantStreak[id]++
+		cant = t.cantStreak[id] >= 2 // one report can be a hiccup; two in a row is a pattern
+	} else {
+		t.cantStreak[id] = 0
+	}
 	s, ok := t.states[id]
 	changed := ok && s.CantReachUs != cant
 	if ok {

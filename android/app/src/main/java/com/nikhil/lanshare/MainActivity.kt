@@ -608,6 +608,11 @@ class MainActivity : Activity() {
                 "receiving" -> Hub.transfer("demo-in", true, d.name) { it.name = "Quarterly report.pdf"; it.total = 9_000_000; it.sent = 2_700_000 }
                 "error" -> showCard(Kind.ERROR, "Couldn't reach ${d.name}", friendly(ConnectException(), d), device = d.id)
                 "folders" -> showSharedFolders(firstTime = true)
+                "send_test" -> {
+                    val f = File(cacheDir, "IMG_2041.jpg")
+                    f.outputStream().use { out -> val b = ByteArray(1 shl 16); repeat(32) { java.util.Random(it.toLong()).nextBytes(b); out.write(b) } }
+                    chooseFolder(d, listOf(Uri.fromFile(f)))
+                }
                 "sheet" -> {
                     val sheet = Sheet(this, "Save on ${d.name}", "2 files · 8.4 MB")
                     sheet.crumb("Documents  ›  Work", null)

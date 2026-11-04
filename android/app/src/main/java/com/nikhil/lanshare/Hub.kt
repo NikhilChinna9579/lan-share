@@ -77,8 +77,11 @@ object Hub {
 
     fun lastInbound(id: String): Long = inbound[id] ?: 0
 
+    private val failStreak = ConcurrentHashMap<String, Int>()
+
     fun reached(id: String, ok: Boolean) {
         (if (ok) reachOk else reachFail)[id] = System.currentTimeMillis()
+        failStreak[id] = if (ok) 0 else (failStreak[id] ?: 0) + 1
     }
 
     /** Can this phone connect to that laptop? null if we don't know (yet). */
@@ -86,7 +89,7 @@ object Hub {
         val ok = reachOk[id] ?: 0
         val fail = reachFail[id] ?: 0
         return when {
-            fail > ok && System.currentTimeMillis() - fail < 120_000 -> false
+            fail > ok && (failStreak[id] ?: 0) >= 2 && System.currentTimeMillis() - fail < 120_000 -> false
             ok > 0 -> true
             else -> null
         }

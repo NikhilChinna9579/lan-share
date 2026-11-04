@@ -28,13 +28,14 @@ var version = "dev"
 const defaultPort = 47821
 
 var (
-	flagData        = flag.String("data", "", "data folder (default: %AppData%\\LanShare)")
-	flagPort        = flag.Int("port", defaultPort, "TCP port to receive on")
-	flagName        = flag.String("name", "", "device name (default: computer name)")
-	flagBackground  = flag.Bool("background", false, "start without opening the window")
-	flagNoWindow    = flag.Bool("no-window", false, "testing: never open a window; print the window's address instead")
-	flagPairingFile = flag.String("pairing-file", "", "testing: write the pairing QR text here whenever pairing starts")
-	flagFolder      = flag.String("folder", "", "testing (send): folder key on the phone; skips the window")
+	flagData          = flag.String("data", "", "data folder (default: %AppData%\\LanShare)")
+	flagPort          = flag.Int("port", defaultPort, "TCP port to receive on")
+	flagName          = flag.String("name", "", "device name (default: computer name)")
+	flagBackground    = flag.Bool("background", false, "start without opening the window")
+	flagNoWindow      = flag.Bool("no-window", false, "testing: never open a window; print the window's address instead")
+	flagPairingFile   = flag.String("pairing-file", "", "testing: write the pairing QR text here whenever pairing starts")
+	flagBlockIncoming = flag.Bool("block-incoming", false, "testing: refuse all incoming connections, like a blocking firewall")
+	flagFolder        = flag.String("folder", "", "testing (send): folder key on the phone; skips the window")
 )
 
 func main() {

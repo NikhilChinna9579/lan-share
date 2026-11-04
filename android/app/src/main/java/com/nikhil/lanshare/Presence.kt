@@ -96,7 +96,7 @@ class Presence(private val ctx: Context, private val myName: String, private val
             }
         }
         Hub.reached(d.id, false)
-        if (System.currentTimeMillis() - Hub.lastInbound(d.id) < 20_000) {
+        if (Hub.canReach(d.id) == false && System.currentTimeMillis() - Hub.lastInbound(d.id) < 20_000) {
             set(d.id, Status(State.ONE_WAY, null, System.currentTimeMillis()))
             return true // it's there; no point scanning the network for it
         }
