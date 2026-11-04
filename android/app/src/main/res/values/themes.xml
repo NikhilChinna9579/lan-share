@@ -37,17 +37,17 @@
     </style>
 
     <!-- Text styles -->
-    <style name="Text.Title">
+    <style name="Text.Title" parent="">
         <item name="android:textSize">16sp</item>
         <item name="android:textColor">@color/ink</item>
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
-    <style name="Text.Body">
+    <style name="Text.Body" parent="">
         <item name="android:textSize">14sp</item>
         <item name="android:textColor">@color/ink_muted</item>
         <item name="android:lineSpacingMultiplier">1.15</item>
     </style>
-    <style name="Text.Section">
+    <style name="Text.Section" parent="">
         <item name="android:textSize">12sp</item>
         <item name="android:textColor">@color/ink_muted</item>
         <item name="android:fontFamily">sans-serif-medium</item>
@@ -55,7 +55,7 @@
         <item name="android:textAllCaps">true</item>
     </style>
 
-    <style name="Button.Primary">
+    <style name="Button.Primary" parent="">
         <item name="android:background">@drawable/bg_button_primary</item>
         <item name="android:textColor">@color/on_primary</item>
         <item name="android:textSize">15sp</item>
@@ -79,7 +79,7 @@
         <item name="android:paddingEnd">18dp</item>
         <item name="android:drawablePadding">6dp</item>
     </style>
-    <style name="Button.Text">
+    <style name="Button.Text" parent="">
         <item name="android:background">@drawable/bg_ripple_rounded</item>
         <item name="android:textColor">@color/primary</item>
         <item name="android:textSize">15sp</item>
