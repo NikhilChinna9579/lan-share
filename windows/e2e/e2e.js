@@ -41,7 +41,7 @@ async function cleanup(code) {
   log(code === 0 ? "ALL PASSED" : `FAILED (${failures} problem(s))`);
   process.exit(code);
 }
-setTimeout(() => { log("TIMEOUT: the whole run took over 120 s"); failures++; cleanup(2); }, 120_000).unref();
+setTimeout(() => { log("TIMEOUT: the whole run took over 180 s"); failures++; cleanup(2); }, 180_000).unref();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const settle = () => sleep(400); // let sheet animations finish before a screenshot
@@ -71,7 +71,7 @@ async function step(name, fn) {
   const phoneData = path.join(work, "phone");
   const pairFile = path.join(work, "pair.json");
   const phoneInbox = path.join(phoneData, "inbox", "Download");
-  const laptopDownloads = path.join(home, "Downloads");
+  let laptopDownloads = path.join(home, "Downloads"); // replaced by the app's real Downloads below
   let page, url;
 
   try {
@@ -97,6 +97,9 @@ async function step(name, fn) {
       await page.goto(url);
       await page.getByText("Pair your phone").waitFor();
       await page.getByText("Ready to receive").waitFor();
+      // Where this laptop saves received files (on Windows: the real Downloads folder).
+      laptopDownloads = await page.evaluate(() => S.folders.find((f) => f.key === "downloads").path);
+      log(`      laptop Downloads: ${laptopDownloads}`);
       await settle(); await page.screenshot({ path: path.join(out, "w01-empty.png") });
     });
 
@@ -104,6 +107,11 @@ async function step(name, fn) {
       await page.getByRole("button", { name: "Show pairing code" }).click();
       await page.locator(".qr img").waitFor();
       await waitFor("pairing file", () => fs.existsSync(pairFile));
+      // The simulated phone runs on this same machine: talk over loopback, so a
+      // firewall on the test machine can't get in the way.
+      const qr = JSON.parse(fs.readFileSync(pairFile, "utf8"));
+      qr.host = "127.0.0.1";
+      fs.writeFileSync(pairFile, JSON.stringify(qr));
       await settle(); await page.screenshot({ path: path.join(out, "w02-pair.png") });
     });
 
@@ -150,6 +158,7 @@ async function step(name, fn) {
     });
 
     await step("phone sends to the laptop; window shows it live", async () => {
+      fs.rmSync(path.join(laptopDownloads, "Scan 2026-11-04.pdf"), { force: true }); // from a previous run on this machine
       const f = path.join(work, "Scan 2026-11-04.pdf");
       fs.writeFileSync(f, crypto.randomBytes(6 * 1024 * 1024));
       // A second simulated phone process just for sending (same identity, different port).

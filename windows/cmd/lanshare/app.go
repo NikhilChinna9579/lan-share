@@ -54,7 +54,13 @@ type app struct {
 	pendingN  int        // bumps each hand-off so the window knows to open the send view
 	lastSeen  map[string]presence.State
 	cancelled map[string]bool
+	quitOnce  sync.Once
 }
+
+// requestQuit stops LAN Share (from the window's menu or the tray).
+func (a *app) requestQuit() { a.quitOnce.Do(func() { close(a.quit) }) }
+
+func logf(format string, args ...any) { log.Printf(format, args...) }
 
 type activity struct {
 	Time   time.Time `json:"time"`
@@ -192,6 +198,7 @@ func (a *app) start() error {
 	a.tracker.OnChange = a.onPresence
 	go a.tracker.Run(a.stopTracker)
 	go installSendTo(a.dataDir)
+	startTray(a)
 	go func() { // heartbeat: keeps "last seen" times and expiring pairing codes fresh
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
@@ -216,6 +223,7 @@ func (a *app) start() error {
 }
 
 func (a *app) stop() {
+	stopTray()
 	close(a.stopTracker)
 	if a.node != nil {
 		a.node.Close() // goodbye on mDNS: phones mark us offline at once
@@ -265,6 +273,7 @@ func (a *app) onServerEvent(e server.Event) {
 		}
 		a.mu.Unlock()
 		a.note("paired", "Paired with "+e.Device, "It finds this laptop by itself from now on.", "")
+		notify("Paired with "+e.Device, "It will find this laptop by itself from now on.")
 		a.tracker.CheckNow()
 	case server.EventProgress:
 		a.updateTransfer(e.Transfer, "in", e.Device, func(t *transfer) {
@@ -281,6 +290,12 @@ func (a *app) onServerEvent(e server.Event) {
 			t.Folder = folder
 			if e.Done {
 				t.State, t.Sent, t.Elapsed = "done", t.Total, time.Since(t.Started).Milliseconds()
+				what := filepath.Base(e.Path)
+				if t.Files > 1 {
+					what = fileCount(t.Files)
+				}
+				title, body := "Received "+what, fmt.Sprintf("From %s · %s in %s · in %s", e.Device, sizeStr(t.Total), durStr(time.Duration(t.Elapsed)*time.Millisecond), folder)
+				go notify(title, body)
 			}
 		})
 	case server.EventFailed:
@@ -317,6 +332,14 @@ func (a *app) onPresence(s presence.State) {
 	if s.Status == presence.Online && !s.CantReachUs && known && prev.CantReachUs {
 		a.note("info", s.Name+" can connect to this laptop again", "", "")
 	}
+	online, all := 0, 0
+	for _, x := range a.tracker.Snapshot() {
+		all++
+		if x.Status == presence.Online {
+			online++
+		}
+	}
+	setTrayTip(fmt.Sprintf("LAN Share · %d of %d phones online", online, all))
 	a.hub.changed()
 }
 

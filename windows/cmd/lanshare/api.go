@@ -145,7 +145,7 @@ func serveAPI(a *app, ln net.Listener) {
 	h("/api/state", func(*http.Request) (any, error) { return json.RawMessage(a.stateJSON()), nil })
 	h("/api/show", func(*http.Request) (any, error) { a.showWindow(); return nil, nil })
 	h("/api/quit", func(*http.Request) (any, error) {
-		go func() { time.Sleep(200 * time.Millisecond); close(a.quit) }()
+		go func() { time.Sleep(200 * time.Millisecond); a.requestQuit() }()
 		return nil, nil
 	})
 
