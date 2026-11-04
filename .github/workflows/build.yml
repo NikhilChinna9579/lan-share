@@ -130,8 +130,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Build debug APK and run unit tests (voice command parser)
+        run: gradle --no-daemon assembleDebug testDebugUnitTest
       - uses: actions/upload-artifact@v4
         with:
           name: lanshare-android

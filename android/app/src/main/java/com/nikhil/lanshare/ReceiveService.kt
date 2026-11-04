@@ -23,7 +23,6 @@ import java.util.concurrent.atomic.AtomicInteger
 class ReceiveService : Service() {
     private var server: PhoneServer? = null
     private var registration: NsdManager.RegistrationListener? = null
-    private val nextId = AtomicInteger(100)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -51,11 +50,12 @@ class ReceiveService : Service() {
         }
         running = true
         Hub.changed() // the app's "Ready to receive" updates right away
+        Bubble.current = Bubble(this).also { it.refresh() }
 
         val name = deviceName(this)
         runCatching {
             Identity.ensure(name)
-            val srv = PhoneServer(this, name, ::notifyReceived)
+            val srv = PhoneServer(this, name, { notifyReceived(this, it) })
             val port = srv.start()
             server = srv
             announce(name, port)
@@ -64,11 +64,14 @@ class ReceiveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (DeviceStore.all(this).isEmpty()) stopSelf()
+        Bubble.current?.refresh() // the bubble setting or permission may have changed
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
+        Bubble.current?.hide()
+        Bubble.current = null
         registration?.let { runCatching { getSystemService(NsdManager::class.java).unregisterService(it) } }
         server?.stop()
         super.onDestroy()
@@ -94,29 +97,6 @@ class ReceiveService : Service() {
         runCatching { getSystemService(NsdManager::class.java).registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
     }
 
-    private fun notifyReceived(r: PhoneServer.Received) {
-        if (r.files.isEmpty()) return
-        val single = r.files.singleOrNull()
-        val tap = if (single != null) {
-            Intent(Intent.ACTION_VIEW).setDataAndType(single.uri, single.mime)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        } else {
-            Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        val id = nextId.incrementAndGet()
-        val pi = PendingIntent.getActivity(this, id, tap,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val total = r.files.sumOf { it.size }
-        val n = Notification.Builder(this, CH_RECEIVED)
-            .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle(single?.let { "Received ${it.name}" } ?: "Received ${plural(r.files.size, "file")}")
-            .setContentText("From ${r.from} · ${formatSize(total)} in ${formatDuration(r.tookMs)} · in ${r.where}")
-            .setContentIntent(pi)
-            .setAutoCancel(true)
-            .build()
-        runCatching { getSystemService(NotificationManager::class.java).notify(id, n) }
-    }
-
     private fun openApp() = PendingIntent.getActivity(this, 0,
         Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
 
@@ -124,6 +104,7 @@ class ReceiveService : Service() {
         private const val CH_READY = "ready"
         private const val CH_RECEIVED = "received"
         private const val ID_READY = 1
+        private val nextId = AtomicInteger(100)
 
         /** True while the service is up (for the "Ready to receive" line in the app). */
         @Volatile var running = false
@@ -135,6 +116,30 @@ class ReceiveService : Service() {
         }
 
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, ReceiveService::class.java))
+
+        /** "Received …" notification; tapping opens the file (or Downloads for several). */
+        fun notifyReceived(ctx: Context, r: PhoneServer.Received) {
+            if (r.files.isEmpty()) return
+            val single = r.files.singleOrNull()
+            val tap = if (single != null) {
+                Intent(Intent.ACTION_VIEW).setDataAndType(single.uri, single.mime)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            } else {
+                Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val id = nextId.incrementAndGet()
+            val pi = PendingIntent.getActivity(ctx, id, tap,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val total = r.files.sumOf { it.size }
+            val n = Notification.Builder(ctx, CH_RECEIVED)
+                .setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle(single?.let { "Received ${it.name}" } ?: "Received ${plural(r.files.size, "file")}")
+                .setContentText("From ${r.from} · ${formatSize(total)} in ${formatDuration(r.tookMs)} · in ${r.where}")
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build()
+            runCatching { ctx.getSystemService(NotificationManager::class.java).notify(id, n) }
+        }
     }
 }
 

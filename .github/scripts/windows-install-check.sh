@@ -23,7 +23,7 @@ until_ok 20 "[ \"\$(field pid)\" != '$PID1' ] && [ -n \"\$(field pid)\" ]" && pa
 until_ok 10 "reg query 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' //v LanShare >/dev/null 2>&1" \
   && pass "starts with Windows" || fail "starts with Windows"
 api /api/uninstall; echo
-until_ok 20 "[ ! -f '$INST' ]" && pass "uninstall removed the program" || fail "uninstall removed the program"
+until_ok 40 "[ ! -f '$INST' ]" && pass "uninstall removed the program" || fail "uninstall removed the program"
 [ ! -f "$LNK" ] && pass "uninstall removed the shortcut" || fail "uninstall removed the shortcut"
 reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Run' //v LanShare >/dev/null 2>&1 && fail "still starts with Windows" || pass "no longer starts with Windows"
 [ -f "$DATA/identity.pem" ] && pass "pairings kept" || fail "pairings kept"

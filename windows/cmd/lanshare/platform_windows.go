@@ -33,6 +33,7 @@ func openWindow(url, dataDir string) error {
 		profile := filepath.Join(os.Getenv("LocalAppData"), "LanShare", "window")
 		cmd := exec.Command(edge, "--app="+url, "--user-data-dir="+profile, "--window-size=480,820",
 			"--no-first-run", "--no-default-browser-check", "--disable-features=Translate,msEdgeSidebarV2")
+		cmd.Dir = os.TempDir() // not our folder: a window left open mustn't block uninstalling
 		return cmd.Start()
 	}
 	return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()

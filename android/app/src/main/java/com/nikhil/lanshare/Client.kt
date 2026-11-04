@@ -7,7 +7,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
-import java.security.MessageDigest
 import java.util.UUID
 
 /** Talking to a paired laptop as a client: pair, ping, list folders, send files. */
@@ -64,6 +63,51 @@ object Client {
             (0 until dirs.length()).map { dirs.getString(it) }
         }
 
+    /** One file in a laptop's folder listing. */
+    data class RemoteFile(val name: String, val size: Long, val modified: Long)
+
+    /** Subfolders and files at [path] in one of the laptop's shared folders. */
+    fun listing(device: Device, myName: String, folderKey: String, path: String): Pair<List<String>, List<RemoteFile>> =
+        PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            conn.send(JSONObject().put("type", "list_request").put("folder", folderKey).put("path", path))
+            val r = conn.expect("list_response")
+            val dirs = r.optJSONArray("dirs") ?: JSONArray()
+            val files = r.optJSONArray("files") ?: JSONArray()
+            (0 until dirs.length()).map { dirs.getString(it) } to (0 until files.length()).map {
+                val f = files.getJSONObject(it)
+                RemoteFile(f.getString("name"), f.optLong("size"), f.optLong("modified"))
+            }
+        }
+
+    /**
+     * Gets files from the laptop's shared folder (PROTOCOL.md §5, Fetch) into this
+     * phone's Downloads. Blocking. [progress] gets (bytes so far, total, index).
+     */
+    fun fetch(ctx: Context, device: Device, myName: String, folderKey: String, path: String, names: List<String>,
+              onConnected: (PeerConnection) -> Unit = {}, progress: (Long, Long, Int) -> Unit): List<PhoneServer.Saved> =
+        PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+            onConnected(conn)
+            val tid = UUID.randomUUID().toString()
+            conn.send(JSONObject().put("type", "fetch_request").put("transfer_id", tid)
+                .put("folder", folderKey).put("path", path).put("files", JSONArray(names)))
+            val offer = conn.receive()
+            when (offer.optString("type")) {
+                "file_offer" -> {}
+                "error" -> throw IllegalStateException(
+                    if (offer.optString("code") == "not_found") "That file is no longer on ${device.name}." else "${device.name} said: ${offer.optString("message", offer.optString("code"))}")
+                else -> throw ProtocolException("unexpected reply: ${offer.optString("type")}")
+            }
+            val arr = offer.getJSONArray("files")
+            val clean = (0 until arr.length()).map { SharedFolders.sanitize(arr.getJSONObject(it).optString("name")) ?: throw ProtocolException("bad file name") }
+            val sizes = (0 until arr.length()).map { arr.getJSONObject(it).optLong("size", -1).also { s -> if (s < 0) throw ProtocolException("bad size") } }
+            conn.send(JSONObject().put("type", "file_accept").put("transfer_id", tid))
+            val saved = Transfer.receive(conn, clean, sizes, { SharedFolders.create(ctx, SharedFolders.DEFAULT, "", it) }, progress)
+            val out = JSONArray()
+            saved.forEach { out.put(it.name) }
+            conn.send(JSONObject().put("type", "transfer_done").put("transfer_id", tid).put("saved", out))
+            saved
+        }
+
     fun folders(device: Device, myName: String): Pair<String, List<Folder>> =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
             conn.send(JSONObject().put("type", "folders_request"))
@@ -92,25 +136,7 @@ object Client {
             if (answer.getString("type") == "file_reject") {
                 throw IllegalStateException("${device.name} refused the files (${answer.optString("reason")}).")
             }
-            val total = items.sumOf { it.size }
-            var sent = 0L
-            val buf = ByteArray(64 * 1024)
-            items.forEachIndexed { index, item ->
-                val digest = MessageDigest.getInstance("SHA-256")
-                var remaining = item.size
-                item.open().use { input ->
-                    while (remaining > 0) {
-                        val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
-                        if (n < 0) throw IllegalStateException("${item.name} got shorter while sending.")
-                        digest.update(buf, 0, n)
-                        conn.output.write(buf, 0, n)
-                        remaining -= n
-                        sent += n
-                        progress(sent, total, index)
-                    }
-                }
-                conn.send(JSONObject().put("type", "file_end").put("index", index).put("sha256", digest.digest().toHex()))
-            }
+            Transfer.stream(conn, items, progress)
             val saved = conn.expect("transfer_done").getJSONArray("saved")
             (0 until saved.length()).map { saved.getString(it) }
         }

@@ -18,9 +18,9 @@ import android.widget.TextView
  * optional breadcrumb with Back, rows, an optional note and primary button, and Cancel.
  * Rows can be replaced while it's open, so it can browse into folders.
  */
-class Sheet(private val activity: Activity, title: String, subtitle: String?) {
+class Sheet(private val activity: Activity, private val title: String, subtitle: String?) {
 
-    enum class Trail { NONE, CHEVRON, SWITCH_ON, SWITCH_OFF, REMOVE }
+    enum class Trail { NONE, CHEVRON, SWITCH_ON, SWITCH_OFF, REMOVE, CHECK_ON, CHECK_OFF }
 
     class Row(
         val icon: Int, val label: String, val sub: String? = null, val chip: String? = null,
@@ -61,6 +61,15 @@ class Sheet(private val activity: Activity, title: String, subtitle: String?) {
 
     fun clear(): Sheet { list.removeAllViews(); return this }
 
+    /** Rebuilds the rows without jumping back to the top (e.g. after ticking a file). */
+    fun redraw(build: () -> Unit) {
+        val scroll = view.findViewById<View>(R.id.sheetScroll)
+        val y = scroll.scrollY
+        clear()
+        build()
+        scroll.post { scroll.scrollTo(0, y) }
+    }
+
     fun add(row: Row): Sheet {
         val r = LayoutInflater.from(activity).inflate(R.layout.item_sheet_row, list, false)
         r.findViewById<ImageView>(R.id.rowIcon).setImageResource(row.icon)
@@ -77,7 +86,15 @@ class Sheet(private val activity: Activity, title: String, subtitle: String?) {
             visibility = if (row.trail == Trail.SWITCH_ON || row.trail == Trail.SWITCH_OFF) View.VISIBLE else View.GONE
             isChecked = row.trail == Trail.SWITCH_ON
         }
-        r.findViewById<View>(R.id.rowChevron).visibility = if (row.trail == Trail.CHEVRON) View.VISIBLE else View.GONE
+        r.findViewById<ImageView>(R.id.rowChevron).apply {
+            visibility = if (row.trail in setOf(Trail.CHEVRON, Trail.CHECK_ON, Trail.CHECK_OFF)) View.VISIBLE else View.GONE
+            if (row.trail == Trail.CHECK_ON || row.trail == Trail.CHECK_OFF) { // a tick box, for choosing files
+                val on = row.trail == Trail.CHECK_ON
+                setImageResource(if (on) R.drawable.ic_check_circle else R.drawable.ic_circle_outline)
+                imageTintList = android.content.res.ColorStateList.valueOf(activity.getColor(if (on) R.color.primary else R.color.ink_muted))
+                contentDescription = if (on) "Chosen" else "Not chosen"
+            }
+        }
         r.findViewById<View>(R.id.rowRemove).apply {
             visibility = if (row.trail == Trail.REMOVE) View.VISIBLE else View.GONE
             setOnClickListener { row.onRemove?.invoke() }
@@ -90,6 +107,7 @@ class Sheet(private val activity: Activity, title: String, subtitle: String?) {
         }
         list.addView(r)
         fit()
+        android.util.Log.d("LanShare", "row: ${row.label}")
         return this
     }
 
@@ -139,7 +157,7 @@ class Sheet(private val activity: Activity, title: String, subtitle: String?) {
         }
     }
 
-    fun show() { dialog.show(); fit() }
+    fun show() { dialog.show(); fit(); android.util.Log.i("LanShare", "sheet: $title") }
     fun dismiss() = dialog.dismiss()
     val isShowing get() = dialog.isShowing
 
@@ -147,6 +165,17 @@ class Sheet(private val activity: Activity, title: String, subtitle: String?) {
 }
 
 /** Icon for a folder key. */
+fun fileIcon(name: String): Int {
+    val mime = SharedFolders.mimeOf(name)
+    return when {
+        mime.startsWith("image/") -> R.drawable.ic_image
+        mime.startsWith("video/") -> R.drawable.ic_video
+        mime.startsWith("audio/") -> R.drawable.ic_music
+        mime == "application/pdf" || mime.startsWith("text/") || "document" in mime -> R.drawable.ic_document
+        else -> R.drawable.ic_file
+    }
+}
+
 fun folderIcon(key: String): Int = when (key) {
     "downloads" -> R.drawable.ic_download
     "documents" -> R.drawable.ic_document

@@ -48,4 +48,6 @@ dependencies {
     // Google's QR scanner UI, provided by Play services: no camera permission needed
     // and almost nothing added to our APK.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // Unit tests of the command parser, run on the build machine (no emulator needed).
+    testImplementation("junit:junit:4.13.2")
 }

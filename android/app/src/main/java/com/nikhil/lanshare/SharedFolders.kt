@@ -96,18 +96,89 @@ object SharedFolders {
 
     class Listing(val dirs: List<String>, val files: List<Triple<String, Long, Long>>) // name, size, modified
 
-    /** Subfolders and files at [path] inside a shared folder. Standard folders list nothing. */
+    /**
+     * Subfolders and files at [path] inside a shared folder. Standard folders are read
+     * through MediaStore: photos, videos and music need the media permission; other
+     * files show only if LAN Share saved them (Android hides other apps' files).
+     */
     fun list(ctx: Context, key: String, path: String): Listing {
         val root = roots(ctx).firstOrNull { it.key == key } ?: throw IllegalArgumentException("bad_folder")
-        val tree = root.tree ?: return Listing(emptyList(), emptyList())
-        val dirId = resolveDir(ctx, tree, path) ?: throw IllegalArgumentException("bad_folder")
-        val dirs = mutableListOf<String>()
+        val parts = cleanPath(path) ?: throw IllegalArgumentException("bad_folder")
+        val dirs = sortedSetOf<String>(String.CASE_INSENSITIVE_ORDER)
         val files = mutableListOf<Triple<String, Long, Long>>()
-        children(ctx, tree, dirId) { _, name, mime, size, modified ->
+        if (root.tree == null) {
+            val dir = root.dir!! + parts.joinToString("") { "$it/" }
+            media(ctx, dir, exact = false) { _, name, rel, size, modified ->
+                if (rel.equals(dir, ignoreCase = true)) files += Triple(name, size, modified)
+                else rel.substring(dir.length).substringBefore('/').takeIf { it.isNotEmpty() && !it.startsWith(".") }?.let { dirs += it }
+            }
+            return Listing(dirs.toList(), files.sortedByDescending { it.third }.take(2000))
+        }
+        val dirId = resolveDir(ctx, root.tree, path) ?: throw IllegalArgumentException("bad_folder")
+        children(ctx, root.tree, dirId) { _, name, mime, size, modified ->
             if (name.startsWith(".")) return@children // hidden
             if (mime == DocumentsContract.Document.MIME_TYPE_DIR) dirs += name else files += Triple(name, size, modified)
         }
-        return Listing(dirs.sortedBy { it.lowercase() }, files.sortedBy { it.first.lowercase() }.take(2000))
+        return Listing(dirs.toList(), files.sortedByDescending { it.third }.take(2000))
+    }
+
+    /** A file in a shared folder, ready to send; null if it isn't there. */
+    fun open(ctx: Context, key: String, path: String, name: String): Client.Outgoing? {
+        val root = roots(ctx).firstOrNull { it.key == key } ?: return null
+        val parts = cleanPath(path) ?: return null
+        if (root.tree == null) {
+            val dir = root.dir!! + parts.joinToString("") { "$it/" }
+            var found: Client.Outgoing? = null
+            media(ctx, dir, exact = true, name = name) { uri, n, _, size, _ ->
+                if (found == null && n == name) found = Client.Outgoing(n, size) {
+                    ctx.contentResolver.openInputStream(uri) ?: error("Can't open $n")
+                }
+            }
+            return found
+        }
+        val dirId = resolveDir(ctx, root.tree, path) ?: return null
+        var found: Client.Outgoing? = null
+        children(ctx, root.tree, dirId) { id, n, mime, size, _ ->
+            if (found == null && n == name && mime != DocumentsContract.Document.MIME_TYPE_DIR) {
+                val uri = DocumentsContract.buildDocumentUriUsingTree(root.tree, id)
+                found = Client.Outgoing(n, size) { ctx.contentResolver.openInputStream(uri) ?: error("Can't open $n") }
+            }
+        }
+        return found
+    }
+
+    /** Can laptops see this phone's photos, videos and music? */
+    fun canReadMedia(ctx: Context): Boolean = mediaPermissions().all {
+        ctx.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    fun mediaPermissions(): Array<String> = if (android.os.Build.VERSION.SDK_INT >= 33) arrayOf(
+        android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_MEDIA_VIDEO,
+        android.Manifest.permission.READ_MEDIA_AUDIO,
+    ) else arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+
+    /** Visible MediaStore items under [dir] (or exactly in it): (uri, name, relative path, size, modified ms). */
+    private fun media(ctx: Context, dir: String, exact: Boolean, name: String? = null,
+                      each: (Uri, String, String, Long, Long) -> Unit) {
+        val base = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED)
+        val sel = StringBuilder(if (exact) "${MediaStore.MediaColumns.RELATIVE_PATH} = ?" else "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?")
+        val args = mutableListOf(if (exact) dir else dir.replace("%", "\\%").replace("_", "\\_") + "%")
+        if (!exact) sel.append(" ESCAPE '\\'")
+        sel.append(" AND ${MediaStore.MediaColumns.IS_PENDING} = 0")
+        if (name != null) { sel.append(" AND ${MediaStore.MediaColumns.DISPLAY_NAME} = ?"); args += name }
+        runCatching {
+            ctx.contentResolver.query(base, cols, sel.toString(), args.toTypedArray(), null)?.use { c ->
+                var n = 0
+                while (c.moveToNext() && n++ < 5000) {
+                    val nm = c.getString(1) ?: continue
+                    if (nm.startsWith(".")) continue
+                    each(android.content.ContentUris.withAppendedId(base, c.getLong(0)), nm, c.getString(2) ?: "",
+                        if (c.isNull(3)) 0 else c.getLong(3), if (c.isNull(4)) 0 else c.getLong(4) * 1000)
+                }
+            }
+        }.onFailure { android.util.Log.w("LanShare", "media query failed: $it") }
     }
 
     // ------------------------------------------------------------- saving

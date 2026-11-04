@@ -7,7 +7,6 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.SocketException
-import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.Executors
@@ -21,7 +20,7 @@ import javax.net.ssl.X509TrustManager
  */
 class PhoneServer(private val ctx: Context, private val myName: String, private val onReceived: (Received) -> Unit) {
 
-    class Saved(val name: String, val uri: Uri, val mime: String, val size: Long)
+    class Saved(val name: String, val uri: Uri, val mime: String, val size: Long, val where: String = "")
     class Received(val from: String, val where: String, val files: List<Saved>, val tookMs: Long)
 
     private var server: SSLServerSocket? = null
@@ -96,6 +95,7 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                 }
                 "list_request" -> list(conn, msg)
                 "file_offer" -> receive(conn, peer, msg)
+                "fetch_request" -> serveFetch(conn, peer, msg)
                 else -> conn.send(JSONObject().put("type", "error").put("code", "unknown_type"))
             }
         }
@@ -132,45 +132,11 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
         conn.send(JSONObject().put("type", "file_accept").put("transfer_id", tid))
 
         val total = sizes.sum()
-        var done = 0L
-        var where = ""
-        val saved = mutableListOf<Saved>()
-        val buf = ByteArray(64 * 1024)
-        try {
-            for (i in names.indices) {
+        val saved = try {
+            Transfer.receive(conn, names, sizes, { SharedFolders.create(ctx, folder, path, it) }) { done, _, i ->
                 Hub.transfer(tid, true, peer.name) {
-                    it.name = names[i]; it.total = total; it.index = i + 1; it.count = names.size
-                    it.cancel = { it.cancelled = true; conn.abort() }
-                }
-                val inc = SharedFolders.create(ctx, folder, path, names[i])
-                where = inc.savedIn
-                var ok = false
-                try {
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    var remaining = sizes[i]
-                    var lastUi = 0L
-                    while (remaining > 0) {
-                        val n = conn.input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
-                        if (n < 0) throw IOException("the laptop disconnected")
-                        digest.update(buf, 0, n)
-                        inc.out.write(buf, 0, n)
-                        remaining -= n
-                        done += n
-                        val now = System.currentTimeMillis()
-                        if (now - lastUi > 150) {
-                            lastUi = now
-                            Hub.transfer(tid, true, peer.name) { it.sent = done }
-                        }
-                    }
-                    val end = conn.expect("file_end")
-                    if (end.optInt("index") != i || end.optString("sha256") != digest.digest().toHex()) {
-                        conn.send(JSONObject().put("type", "error").put("code", "checksum"))
-                        throw IOException("the file got damaged on the way (checksum mismatch)")
-                    }
-                    saved += Saved(inc.finish(), inc.uri, inc.mime, sizes[i])
-                    ok = true
-                } finally {
-                    if (!ok) inc.discard() // never leave half-written files behind
+                    it.name = names[i]; it.total = total; it.index = i + 1; it.count = names.size; it.sent = done
+                    if (it.cancel == null) it.cancel = { it.cancelled = true; conn.abort() }
                 }
             }
         } catch (e: Exception) {
@@ -183,6 +149,7 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
             }
             throw e
         }
+        val where = saved.lastOrNull()?.where ?: ""
         val out = JSONArray()
         saved.forEach { out.put(it.name) }
         conn.send(JSONObject().put("type", "transfer_done").put("transfer_id", tid).put("saved", out))
@@ -191,6 +158,60 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
         val what = saved.singleOrNull()?.name ?: plural(saved.size, "file")
         Hub.add("received", "Received $what", "From ${peer.name} · ${formatSize(total)} in ${formatDuration(took)} · in $where")
         onReceived(Received(peer.name, where, saved, took))
+    }
+
+    /**
+     * A paired laptop asks for files from one of our shared folders (PROTOCOL.md §5,
+     * Fetch). Only plain, visible files directly in that folder are served.
+     */
+    private fun serveFetch(conn: PeerConnection, peer: Device, req: JSONObject) {
+        val tid = req.optString("transfer_id").ifEmpty { System.nanoTime().toString() }
+        val folder = req.optString("folder")
+        val path = req.optString("path")
+        fun fail(code: String, msg: String) = conn.send(JSONObject().put("type", "error").put("code", code).put("message", msg))
+        if (SharedFolders.roots(ctx).none { it.key == folder } || SharedFolders.cleanPath(path) == null) return fail("bad_folder", "not a shared folder")
+        val arr = req.optJSONArray("files") ?: return fail("not_found", "no files asked for")
+        val items = mutableListOf<Client.Outgoing>()
+        for (i in 0 until arr.length()) {
+            val name = arr.optString(i)
+            if (SharedFolders.sanitize(name) != name || name.startsWith(".")) return fail("not_found", "bad name")
+            items += SharedFolders.open(ctx, folder, path, name) ?: return fail("not_found", "$name isn't there")
+        }
+        if (items.isEmpty()) return fail("not_found", "no files asked for")
+        val offer = JSONArray()
+        items.forEach { offer.put(JSONObject().put("name", it.name).put("size", it.size)) }
+        conn.send(JSONObject().put("type", "file_offer").put("transfer_id", tid).put("folder", folder).put("path", path).put("files", offer))
+        if (conn.expect("file_accept", "file_reject").optString("type") != "file_accept") return
+        val total = items.sumOf { it.size }
+        val label = (listOf(SharedFolders.roots(ctx).first { it.key == folder }.label) + SharedFolders.cleanPath(path)!!).joinToString("/")
+        Hub.transfer(tid, false, peer.name) {
+            it.name = items[0].name; it.total = total; it.count = items.size; it.folder = label
+            it.cancel = { it.cancelled = true; conn.abort() }
+        }
+        try {
+            var lastUi = 0L
+            Transfer.stream(conn, items) { sent, _, i ->
+                val now = System.currentTimeMillis()
+                if (now - lastUi > 150 || sent == total) {
+                    lastUi = now
+                    Hub.transfer(tid, false, peer.name) { it.sent = sent; it.name = items[i].name; it.index = i + 1 }
+                }
+            }
+            conn.expect("transfer_done")
+        } catch (e: Exception) {
+            if (Hub.get(tid)?.cancelled == true) {
+                Hub.transfer(tid, false, peer.name) { it.state = Hub.State.CANCELLED; it.message = "Cancelled." }
+            } else {
+                Hub.transfer(tid, false, peer.name) { it.state = Hub.State.ERROR; it.message = e.message ?: "failed" }
+                Hub.add("error", "${peer.name} couldn't get files", e.message ?: "")
+            }
+            throw e
+        }
+        Hub.transfer(tid, false, peer.name) { it.state = Hub.State.DONE; it.sent = total; it.files = items.size; it.cancel = null }
+        val took = Hub.get(tid)?.elapsed ?: 0
+        val what = items.singleOrNull()?.name ?: plural(items.size, "file")
+        Hub.add("sent", "${peer.name} got $what", "From $label · ${formatSize(total)} in ${formatDuration(took)}")
+        android.util.Log.i("LanShare", "served ${items.size} files to ${peer.name}")
     }
 
     /** Lets in only laptops we have paired with; everyone else fails the TLS handshake. */

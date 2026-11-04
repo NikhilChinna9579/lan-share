@@ -49,6 +49,7 @@ func install() error {
 		log.Printf("install: shortcut: %v", err)
 	}
 	cmd := exec.Command(installedExe(), "--after-install")
+	cmd.Dir = os.TempDir() // keeps the install folder free of open handles, so uninstall can delete it
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: false}
 	return cmd.Start()
 }
@@ -72,9 +73,13 @@ func uninstall(dataDir string, removeData bool) error {
 	if !isInstalled() {
 		return nil
 	}
-	// A running .exe can't delete itself: ask cmd to do it a moment after we exit.
-	script := `ping -n 3 127.0.0.1 >nul & rmdir /s /q "` + installDir() + `"`
+	// A running .exe can't delete itself: cmd deletes the folder after we exit. It
+	// retries every second for up to 30 s, in case we (or anything else) take a while
+	// to let go of the files.
+	dir := installDir()
+	script := `for /l %i in (1,1,30) do @(ping -n 2 127.0.0.1 >nul & rmdir /s /q "` + dir + `" 2>nul & if not exist "` + dir + `" exit /b 0)`
 	cmd := exec.Command("cmd", "/c", script)
+	cmd.Dir = os.TempDir()
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.Start()
 }

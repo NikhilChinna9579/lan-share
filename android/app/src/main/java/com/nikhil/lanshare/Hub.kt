@@ -54,8 +54,13 @@ object Hub {
 
     @Synchronized
     fun transfer(id: String, inbound: Boolean, device: String, update: (Transfer) -> Unit) {
+        val isNew = id !in transfers
         val t = transfers.getOrPut(id) { Transfer(id, inbound, device) }
+        val before = t.state
         update(t)
+        // One line per start and per end: what tests (and bug reports) go by.
+        if (isNew) android.util.Log.i("LanShare", "transfer ${if (inbound) "in" else "out"} started: ${t.name} (${t.count} files) ${if (inbound) "from" else "to"} $device")
+        if (t.state != before) android.util.Log.i("LanShare", "transfer ${if (inbound) "in" else "out"} ${t.state}: ${t.name} ${t.message}")
         t.updated = System.currentTimeMillis()
         if (t.state != State.RUNNING && t.elapsed == 0L) t.elapsed = t.updated - t.started
         while (transfers.size > 6) transfers.remove(transfers.keys.first())
@@ -81,6 +86,7 @@ object Hub {
     @Synchronized
     fun add(kind: String, text: String, detail: String = "") {
         items.addFirst(Item(System.currentTimeMillis(), kind, text, detail))
+        android.util.Log.i("LanShare", "activity: $kind: $text · $detail")
         while (items.size > 30) items.removeLast()
         save()
         changed()
@@ -119,6 +125,12 @@ object Hub {
     private val inboundHost = ConcurrentHashMap<String, String>()
     fun inboundFrom(id: String, host: String) { inboundHost[id] = host }
     fun inboundHost(id: String): String? = inboundHost[id]
+
+    // The file(s) last shared into LAN Share: what "this" means to the assistant for a while.
+    @Volatile private var lastShared: Pair<Long, List<android.net.Uri>>? = null
+    fun shared(uris: List<android.net.Uri>) { lastShared = System.currentTimeMillis() to uris }
+    fun recentlyShared(): List<android.net.Uri>? =
+        lastShared?.takeIf { System.currentTimeMillis() - it.first < 10 * 60_000 }?.second
 
     private val failStreak = ConcurrentHashMap<String, Int>()
 
