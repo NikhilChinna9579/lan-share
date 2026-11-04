@@ -64,7 +64,7 @@ class MainActivity : Activity() {
 
     /** Runs on the main thread, but only if this screen is still alive. */
     private fun ui(block: () -> Unit) {
-        ui { if (!isFinishing && !isDestroyed) block() }
+        main.post { if (!isFinishing && !isDestroyed) block() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -63,7 +63,12 @@ trap cleanup EXIT
 A install -r android/app/build/outputs/apk/debug/app-debug.apk >/dev/null && pass "install APK" || fail "install APK"
 A shell pm grant $PKG android.permission.POST_NOTIFICATIONS 2>/dev/null
 A forward tcp:47821 tcp:47821   # lets the laptop program reach the phone's receiver
+# Stop at once if the app crashes: no point running the rest.
+crashed() { A logcat -d -b crash 2>/dev/null | grep -q "Process: $PKG"; }
+bail_if_crashed() { if crashed; then fail "app crashed during: $1"; A logcat -d -b crash > "$OUT/crashes.txt"; log "stopping early"; exit 1; fi; }
+A logcat -b crash -c
 night no;  app; shot 01-unpaired-light
+bail_if_crashed "first launch"
 screen_has "Pair your laptop" && pass "first launch shows pairing" || fail "first launch shows pairing"
 night yes; app; shot 01-unpaired-dark; night no
 
@@ -77,11 +82,13 @@ until_ok 10 "[ -f '$WORK/pair.json' ]" && pass "laptop opened pairing" || fail "
 hook test_pair.txt "$(python3 -c "import json;q=json.load(open('$WORK/pair.json'));q['host']='10.0.2.2';print(json.dumps(q))")"
 app 8
 shot 02-shared-folders-after-pairing
+bail_if_crashed "pairing"
 screen_has "Shared folders" && pass "pairing done; shared-folder choice shown" || fail "pairing done; shared-folder choice shown"
 A shell input keyevent KEYCODE_BACK; sleep 1
 until_ok 20 "state | grep -q '\"status\":\"online\"'" && pass "laptop sees the phone online" || fail "laptop sees the phone online"
 until_ok 30 "screen_has 'Online · '" && pass "phone sees the laptop online" || fail "phone sees the laptop online"
 shot 03-home-online
+bail_if_crashed "home screen"
 
 # ---------------------------------------------------------------- 3. laptop -> phone, for real
 head -c 3000000 /dev/urandom > "$WORK/Quarterly report.pdf"
@@ -107,6 +114,7 @@ else
   fail "folder sheet listed the laptop's Pictures"
 fi
 
+bail_if_crashed "sending"
 # ---------------------------------------------------------------- 5. screens with test data
 hook demo.txt add_offline; app 10; shot 09-devices-light
 night yes; app 10; shot 09-devices-dark; night no
