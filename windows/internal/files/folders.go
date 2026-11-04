@@ -250,3 +250,7 @@ func (f *Folders) save() error {
 	}
 	return os.Rename(tmp, f.file)
 }
+
+// IsHidden says whether a file should stay out of listings and fetches
+// (dot-files; on Windows also hidden and system files).
+func IsHidden(dir, name string) bool { return isHidden(dir, name) }

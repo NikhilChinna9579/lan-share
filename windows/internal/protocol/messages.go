@@ -108,3 +108,13 @@ type PairingQR struct {
 	Name string `json:"name"`
 	Code string `json:"code"`
 }
+
+// FetchRequest asks a device to send files from one of its shared folders. The
+// device answers like a sender: file_offer, then (after file_accept) the bytes.
+type FetchRequest struct {
+	Type       string   `json:"type"` // "fetch_request"
+	TransferID string   `json:"transfer_id"`
+	Folder     string   `json:"folder"`
+	Path       string   `json:"path,omitempty"`
+	Files      []string `json:"files"`
+}

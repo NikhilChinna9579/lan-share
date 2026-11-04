@@ -197,6 +197,34 @@ async function step(name, fn) {
       await page.getByText(/Sent Big video\.mp4 to Nikhil's phone/).first().waitFor();
     });
 
+    await step("get a file from the phone (browse its folder, tick, Get)", async () => {
+      const name = "Meeting notes.txt";
+      fs.rmSync(path.join(laptopDownloads, name), { force: true });
+      const src = path.join(phoneData, "inbox", "Documents", name);
+      fs.mkdirSync(path.dirname(src), { recursive: true });
+      fs.writeFileSync(src, crypto.randomBytes(300_000));
+      await page.locator('.dev [data-act="get"]').first().click();
+      await page.locator('[data-act="root"]', { hasText: "Documents" }).click();
+      await page.locator('[data-act="pickfile"]', { hasText: name }).click();
+      await page.locator('[data-act="dofetch"]', { hasText: /Get Meeting notes\.txt .* into Downloads/ }).waitFor();
+      await settle(); await page.screenshot({ path: path.join(out, "w08d-get-sheet.png") });
+      await page.locator('[data-act="dofetch"]').click();
+      await page.getByText(`Got ${name} from Nikhil's phone`).first().waitFor({ timeout: 15_000 });
+      const got = path.join(laptopDownloads, name);
+      await waitFor("fetched file on the laptop", () => fs.existsSync(got) && fs.statSync(got).size === 300_000);
+      await settle(); await page.screenshot({ path: path.join(out, "w08e-got.png") });
+    });
+
+    await step("phone gets a file from the laptop", async () => {
+      const name = "Slides.pptx";
+      fs.writeFileSync(path.join(laptopDownloads, name), crypto.randomBytes(2_000_000));
+      const dest = path.join(phoneData, "inbox", "Fetched", name);
+      fs.rmSync(dest, { force: true });
+      start("phone-fetch", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47823", "-fetch", "downloads:" + name]);
+      await page.getByText(`Nikhil's phone got ${name}`).first().waitFor({ timeout: 15_000 });
+      await waitFor("file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 2_000_000);
+    });
+
     await step("settings shows shared folders", async () => {
       await page.locator("#settingsBtn").click();
       await page.getByText("Shared folders").waitFor();
@@ -261,7 +289,8 @@ async function step(name, fn) {
       await page.goto(url2);
       await page.getByText("Sent Holiday photos.zip to Nikhil's phone").first().waitFor();
     });
-  } catch {
+  } catch (e) {
+    if (!failures) { failures++; log(`FAIL  ${e.message}`); } // a crash outside any step still fails the run
     if (page) await page.screenshot({ path: path.join(out, "failure.png") }).catch(() => {});
   }
   await cleanup(failures ? 1 : 0);

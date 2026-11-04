@@ -3,21 +3,20 @@
 package client
 
 import (
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/NikhilChinna9579/lan-share/windows/internal/files"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/identity"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/protocol"
+	"github.com/NikhilChinna9579/lan-share/windows/internal/transfer"
 )
 
 // ErrWrongDevice means something answered at that address, but not the device we paired with.
@@ -210,45 +209,70 @@ func (c *Conn) SendFiles(transferID, folderKey, subPath string, paths []string, 
 		return nil, fmt.Errorf("unexpected reply %q", typ)
 	}
 
-	var sent int64
-	buf := make([]byte, 256*1024)
-	for i, p := range paths {
-		f, err := os.Open(p)
-		if err != nil {
-			return nil, err
-		}
-		h := sha256.New()
-		size := offer.Files[i].Size
-		for remaining := size; remaining > 0; {
-			n := int64(len(buf))
-			if remaining < n {
-				n = remaining
-			}
-			got, err := io.ReadFull(f, buf[:n])
-			if err != nil {
-				f.Close()
-				return nil, fmt.Errorf("%s changed while sending: %w", filepath.Base(p), err)
-			}
-			h.Write(buf[:got])
-			c.c.SetDeadline(time.Now().Add(15 * time.Second))
-			if _, err := c.c.Write(buf[:got]); err != nil {
-				f.Close()
-				return nil, err
-			}
-			remaining -= int64(got)
-			sent += int64(got)
-			if progress != nil {
-				progress(sent, total, i)
-			}
-		}
-		f.Close()
-		if err := c.send(protocol.FileEnd{Type: "file_end", Index: i, SHA256: hex.EncodeToString(h.Sum(nil))}); err != nil {
-			return nil, err
-		}
+	sizes := make([]int64, len(paths))
+	for i := range paths {
+		sizes[i] = offer.Files[i].Size
+	}
+	if err := transfer.Stream(&deadlineConn{c.c}, paths, sizes, progress); err != nil {
+		return nil, err
 	}
 	var done protocol.TransferDone
 	if err := c.expect(&done, "transfer_done"); err != nil {
 		return nil, err
 	}
 	return done.Saved, nil
+}
+
+// FetchFiles asks the device for files from one of its shared folders and saves
+// them in saveDir. progress gets bytes received so far, the total and the file index.
+func (c *Conn) FetchFiles(transferID, folder, path string, names []string, saveDir string, progress Progress) ([]string, error) {
+	if err := c.send(protocol.FetchRequest{Type: "fetch_request", TransferID: transferID, Folder: folder, Path: path, Files: names}); err != nil {
+		return nil, err
+	}
+	var offer protocol.FileOffer
+	if err := c.expect(&offer, "file_offer"); err != nil {
+		return nil, err
+	}
+	if len(offer.Files) != len(names) {
+		return nil, errors.New("the device offered different files")
+	}
+	clean := make([]string, len(names))
+	sizes := make([]int64, len(names))
+	for i, f := range offer.Files {
+		n, err := files.SanitizeName(f.Name)
+		if err != nil || f.Size < 0 {
+			return nil, fmt.Errorf("bad file name from the device: %q", f.Name)
+		}
+		clean[i], sizes[i] = n, f.Size
+	}
+	if err := c.send(protocol.FileAccept{Type: "file_accept", TransferID: transferID}); err != nil {
+		return nil, err
+	}
+	dc := &deadlineConn{c.c}
+	saved, err := transfer.Receive(dc, dc, saveDir, clean, sizes, func(done, total int64, i int) {
+		if progress != nil {
+			progress(done, total, i)
+		}
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.send(protocol.TransferDone{Type: "transfer_done", TransferID: transferID, Saved: saved}); err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
+// deadlineConn pushes the deadline forward on every read and write, so a big
+// transfer can take as long as it needs while a stalled one fails after 15 s.
+type deadlineConn struct{ c net.Conn }
+
+func (d *deadlineConn) Read(p []byte) (int, error) {
+	d.c.SetDeadline(time.Now().Add(15 * time.Second))
+	return d.c.Read(p)
+}
+
+func (d *deadlineConn) Write(p []byte) (int, error) {
+	d.c.SetDeadline(time.Now().Add(15 * time.Second))
+	return d.c.Write(p)
 }

@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/NikhilChinna9579/lan-share/windows/internal/client"
@@ -33,6 +34,7 @@ func main() {
 	sendFile := flag.String("send", "", "after starting, send this file to the paired laptop (Downloads)")
 	slowMB := flag.Int64("slow", 0, "receive at most this many MB per second (to test cancelling)")
 	cantReach := flag.Bool("cant-reach", false, "pretend this phone can't connect to the laptop (firewall test)")
+	fetch := flag.String("fetch", "", "after starting, get folder:name from the paired laptop into inbox/Fetched")
 	flag.Parse()
 
 	id, err := identity.LoadOrCreate(*data, *name)
@@ -68,9 +70,28 @@ func main() {
 			}
 		}()
 	}
+	if *fetch != "" {
+		folder, want, _ := strings.Cut(*fetch, ":")
+		go func() {
+			time.Sleep(time.Second)
+			for _, d := range ts.List() {
+				c, err := client.Dial(d.Addr, d.ID, id, *name, 5*time.Second)
+				if err != nil {
+					log.Printf("fetch: %v", err)
+					continue
+				}
+				saved, err := c.FetchFiles(fmt.Sprint(time.Now().UnixNano()), folder, "", []string{want}, filepath.Join(inbox, "Fetched"), nil)
+				c.Close()
+				log.Printf("fetched from %s: %v %v", d.Name, saved, err)
+			}
+		}()
+	}
 	srv := &server.Server{Name: *name, Identity: id, Trust: ts, Folders: folders, OnEvent: func(e server.Event) {
 		if e.Kind == server.EventReceived {
 			log.Printf("received %s (%d bytes) from %s", e.Path, e.Bytes, e.Device)
+		}
+		if e.Kind == server.EventSent {
+			log.Printf("served %d files (%d bytes) to %s", e.Count, e.Bytes, e.Device)
 		}
 	}}
 	srv.Throttle = *slowMB << 20

@@ -121,9 +121,23 @@ Receiver rules:
    name (`name (2).ext` if taken). Mismatch → delete the `.part`, send `error` `checksum`.
 3. Connection drops mid-transfer → delete every `.part` from that transfer.
 
+### Fetch (getting files from the other device)
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `fetch_request` | requester → owner | `transfer_id`, `folder` (key), `path` (optional), `files`: list of file names in that folder |
+
+The owner answers like a sender: `file_offer` (same `transfer_id`, with sizes), and after
+the requester's `file_accept` the raw bytes and `file_end` frames; the requester ends
+with `transfer_done`. The requester follows the receiver rules above and saves into a
+folder of its own choosing (its default). The owner refuses with `error` `bad_folder`
+(not a shared folder, or the path leaves it) or `not_found` (a name with path parts, a
+hidden or system file, a folder, or a file that isn't there). Only files directly in
+the requested folder can be fetched.
+
 ## 6. Error codes
 
-`version`, `unknown_type`, `bad_frame`, `not_trusted`, `bad_folder`, `checksum`,
+`version`, `unknown_type`, `bad_frame`, `not_trusted`, `bad_folder`, `not_found`, `checksum`,
 `io`, `internal`.
 
 ## 7. Versioning

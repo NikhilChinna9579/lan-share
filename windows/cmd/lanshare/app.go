@@ -97,6 +97,7 @@ type transfer struct {
 type sendReq struct {
 	DeviceID, Folder, FolderLabel, Sub string
 	List                               []fileInfo
+	Fetch                              []string // set for a fetch: file names to get from the phone
 }
 
 type pairing struct {
@@ -304,8 +305,34 @@ func (a *app) onServerEvent(e server.Event) {
 			a.updateTransfer(e.Transfer, "in", e.Device, func(t *transfer) { t.State, t.Message = "cancelled", "Cancelled. Nothing was kept." })
 			return
 		}
-		a.note("error", "Receiving from "+e.Device+" failed", e.Err.Error(), "")
-		a.updateTransfer(e.Transfer, "in", e.Device, func(t *transfer) { t.State, t.Message = "error", e.Err.Error() })
+		dir := "in"
+		a.mu.Lock()
+		for _, t := range a.transfers {
+			if t.ID == e.Transfer {
+				dir = t.Dir
+			}
+		}
+		a.mu.Unlock()
+		if dir == "out" {
+			a.note("error", e.Device+" couldn't get files", e.Err.Error(), "")
+		} else {
+			a.note("error", "Receiving from "+e.Device+" failed", e.Err.Error(), "")
+		}
+		a.updateTransfer(e.Transfer, dir, e.Device, func(t *transfer) { t.State, t.Message = "error", e.Err.Error() })
+	case server.EventSending: // the phone is fetching files from us
+		a.updateTransfer(e.Transfer, "out", e.Device, func(t *transfer) {
+			t.Name, t.Sent, t.Total, t.Index, t.Count = e.Name, e.Bytes, e.Total, e.Index+1, e.Count
+			t.Folder = a.folderLabel(e.Folder)
+			tid := e.Transfer
+			t.cancel = func() { a.srv.Cancel(tid) }
+		})
+	case server.EventSent:
+		what := e.Name
+		if e.Count > 1 {
+			what = fileCount(e.Count)
+		}
+		a.updateTransfer(e.Transfer, "out", e.Device, func(t *transfer) { t.State, t.Sent, t.Files = "done", t.Total, e.Count })
+		a.note("sent", e.Device+" got "+what, fmt.Sprintf("From %s · %s in %s", a.folderLabel(e.Folder), sizeStr(e.Bytes), durStr(e.Duration)), "")
 	}
 }
 
@@ -464,7 +491,7 @@ func (a *app) dial(id string) (*client.Conn, trust.Device, error) {
 func (a *app) send(deviceID, folder, folderLabel, sub string, list []fileInfo) string {
 	tidb := make([]byte, 8)
 	rand.Read(tidb)
-	return a.startSend(hex.EncodeToString(tidb), &sendReq{deviceID, folder, folderLabel, sub, list})
+	return a.startSend(hex.EncodeToString(tidb), &sendReq{DeviceID: deviceID, Folder: folder, FolderLabel: folderLabel, Sub: sub, List: list})
 }
 
 func (a *app) startSend(tid string, req *sendReq) string {
@@ -532,6 +559,67 @@ func (a *app) sendNowList(tid, deviceID, folder, sub string, list []fileInfo) er
 	return err
 }
 
+// fetch gets files from a phone's shared folder into this laptop's default folder.
+func (a *app) fetch(deviceID, folder, folderLabel, sub string, names []string) string {
+	tidb := make([]byte, 8)
+	rand.Read(tidb)
+	return a.startFetch(hex.EncodeToString(tidb), &sendReq{DeviceID: deviceID, Folder: folder, FolderLabel: folderLabel, Sub: sub, Fetch: names})
+}
+
+func (a *app) startFetch(tid string, req *sendReq) string {
+	d, _ := a.trust.Get(req.DeviceID)
+	saveKey := a.folders.Default
+	saveDir, _ := a.folders.Path(saveKey)
+	label := a.folderLabel(saveKey)
+	a.updateTransfer(tid, "in", d.Name, func(t *transfer) {
+		t.Count, t.Name, t.Index, t.Folder, t.retry = len(req.Fetch), req.Fetch[0], 1, label, req
+	})
+	go func() {
+		started := time.Now()
+		saved, err := func() ([]string, error) {
+			c, _, err := a.dial(req.DeviceID)
+			if err != nil {
+				return nil, err
+			}
+			defer c.Close()
+			a.updateTransfer(tid, "in", d.Name, func(t *transfer) { t.cancel = func() { c.Abort() } })
+			if a.wasCancelled(tid) {
+				return nil, errors.New("cancelled")
+			}
+			return c.FetchFiles(tid, req.Folder, req.Sub, req.Fetch, saveDir, func(got, total int64, i int) {
+				a.updateTransfer(tid, "in", d.Name, func(t *transfer) { t.Sent, t.Total, t.Name, t.Index = got, total, req.Fetch[i], i+1 })
+			})
+		}()
+		took := time.Since(started)
+		what := fileCount(len(req.Fetch))
+		if len(req.Fetch) == 1 {
+			what = req.Fetch[0]
+		}
+		switch {
+		case a.wasCancelled(tid):
+			a.updateTransfer(tid, "in", d.Name, func(t *transfer) { t.State, t.Message = "cancelled", "Cancelled. Nothing was kept." })
+			a.note("info", "Cancelled getting "+what+" from "+d.Name, "", "")
+		case err != nil:
+			a.updateTransfer(tid, "in", d.Name, func(t *transfer) { t.State, t.Message = "error", err.Error() })
+			a.note("error", "Couldn't get "+what+" from "+d.Name, err.Error(), "")
+		default:
+			var total int64
+			a.updateTransfer(tid, "in", d.Name, func(t *transfer) {
+				t.State, t.Sent, t.Files, t.retry = "done", t.Total, len(saved), nil
+				total = t.Total
+			})
+			last := ""
+			if len(saved) > 0 {
+				last = filepath.Join(saveDir, saved[len(saved)-1])
+			}
+			a.note("received", "Got "+what+" from "+d.Name,
+				fmt.Sprintf("%s in %s · in %s", sizeStr(total), durStr(took), label), last)
+			go notify("Got "+what, fmt.Sprintf("From %s · %s in %s · in %s", d.Name, sizeStr(total), durStr(took), label))
+		}
+	}()
+	return tid
+}
+
 // cancelTransfer stops a running transfer in either direction.
 func (a *app) cancelTransfer(id string) error {
 	a.mu.Lock()
@@ -572,6 +660,9 @@ func (a *app) retryTransfer(id string) (string, error) {
 	a.mu.Unlock()
 	if req == nil {
 		return "", errors.New("nothing to retry")
+	}
+	if len(req.Fetch) > 0 {
+		return a.fetch(req.DeviceID, req.Folder, req.FolderLabel, req.Sub, req.Fetch), nil
 	}
 	req.List = a.checkedFiles(req.List)
 	if len(req.List) == 0 {

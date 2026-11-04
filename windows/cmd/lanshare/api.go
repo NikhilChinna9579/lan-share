@@ -253,6 +253,19 @@ func serveAPI(a *app, ln net.Listener) {
 		a.mu.Unlock()
 		return map[string]string{"id": a.send(in.Device, in.Folder, in.FolderLabel, in.Path, in.Files)}, nil
 	})
+	h("/api/fetch", func(r *http.Request) (any, error) {
+		var in struct {
+			Device, Folder, FolderLabel, Path string
+			Names                             []string
+		}
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		if len(in.Names) == 0 {
+			return nil, fmt.Errorf("no files chosen")
+		}
+		return map[string]string{"id": a.fetch(in.Device, in.Folder, in.FolderLabel, in.Path, in.Names)}, nil
+	})
 	h("/api/cancel", func(r *http.Request) (any, error) {
 		var in struct{ ID string }
 		if err := readJSON(r, &in); err != nil {

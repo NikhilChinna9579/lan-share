@@ -115,6 +115,9 @@
   .crumbs button { padding:4px 8px; border-radius:8px; color:var(--brand); font-weight:600; }
   .crumbs button:hover { background:var(--brand-soft); }
   .crumbs span { color:var(--faint); }
+  .check { width:22px; height:22px; border-radius:7px; border:2px solid var(--line); display:grid; place-items:center; flex:none; }
+  .check.on { background:var(--brand); border-color:var(--brand); color:#fff; }
+  .check .i { width:16px; height:16px; }
   .devpick { display:flex; flex-wrap:wrap; gap:8px; }
   .devpick button { display:flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px; border:1px solid var(--line); }
   .devpick button.sel { background:var(--brand); color:var(--on-brand); border-color:var(--brand); }
@@ -321,6 +324,7 @@ function render() {
       return `<div class="card dev"><div class="avatar">${icon("phone")}<span class="dot ${dot}"></span></div>
         <div class="grow"><div class="t1">${esc(d.name)}</div><div class="t2">${line}</div></div>
         <button class="btn tonal" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>${icon("send")}Send</button>
+        <button class="btn ghost" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Get files from ${esc(d.name)}">${icon("down")}Get</button>
         <button class="iconbtn" data-act="devmenu" data-id="${d.id}" title="More">${icon("more")}</button></div>`;
     }).join("") + `<div class="center"><button class="btn ghost" data-act="pair">${icon("add")}Pair another phone</button></div>`;
   }
@@ -383,6 +387,7 @@ function renderModal() {
     if (!d) return closeModal();
     el.innerHTML = head(esc(d.name)) + `<div class="rows">
       <button class="r" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("send")}</span><span class="grow">Send files</span></button>
+      <button class="r" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("down")}</span><span class="grow">Get files from this phone</span></button>
       <button class="r" data-act="forget" data-id="${d.id}"><span class="ic" style="background:var(--bad-soft);color:var(--bad)">${icon("close")}</span><span class="grow">Forget this phone</span></button></div>`;
   }
 }
@@ -413,7 +418,7 @@ function renderSettings(el) {
 function openSend(opts) {
   const online = S.devices.filter((d) => d.status === "online");
   const device = opts.device || (online.length === 1 ? online[0].id : null);
-  openModal({kind: "send", files: opts.files || [], device, roots: null, folder: null, path: [], dirs: null, loading: false, error: ""});
+  openModal({kind: "send", get: !!opts.get, files: opts.files || [], pick: new Set(), list: [], device, roots: null, folder: null, path: [], dirs: null, loading: false, error: ""});
   if (device) loadRoots();
 }
 
@@ -429,11 +434,12 @@ async function loadRoots() {
 }
 
 async function openFolder(folder, path) {
-  const m = modal; m.folder = folder; m.path = path; m.dirs = null; m.error = ""; renderModal();
+  const m = modal; m.folder = folder; m.path = path; m.dirs = null; m.list = []; m.pick = new Set(); m.error = ""; renderModal();
   try {
     const r = await api(`/api/remote/list?device=${m.device}&folder=${encodeURIComponent(folder.key)}&path=${encodeURIComponent(path.join("/"))}`, undefined, "GET");
     if (modal !== m) return;
     m.dirs = r.dirs || [];
+    m.list = (r.files || []).sort((a, b) => b.modified - a.modified); // newest first
   } catch (e) { m.error = e.message; m.dirs = []; }
   if (modal === m) renderModal();
 }
@@ -441,19 +447,19 @@ async function openFolder(folder, path) {
 function renderSend(el) {
   const m = modal;
   const total = m.files.reduce((s, f) => s + f.size, 0);
-  let h = head("Send files");
-  h += `<div class="label">Files</div><div class="rows">` + m.files.map((f, i) => `<div class="r"><span class="ic">${icon("file")}</span>
+  let h = head(m.get ? "Get files from a phone" : "Send files");
+  if (!m.get) h += `<div class="label">Files</div><div class="rows">` + m.files.map((f, i) => `<div class="r"><span class="ic">${icon("file")}</span>
     <span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${size(f.size)}</div></span>
     <button class="iconbtn" data-act="rmfile" data-i="${i}" title="Remove">${icon("close")}</button></div>`).join("") +
     `<button class="r" data-act="addfiles"><span class="ic">${icon("add")}</span><span class="grow" style="color:var(--brand);font-weight:600">${m.files.length ? "Add more files…" : "Choose files…"}</span><span class="small">or drop them here</span></button></div>`;
 
-  h += `<div class="label">To</div><div class="devpick">` + S.devices.map((d) =>
+  h += `<div class="label">${m.get ? "From" : "To"}</div><div class="devpick">` + S.devices.map((d) =>
     `<button class="${m.device === d.id ? "sel" : ""}" data-act="pickdev" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>
       <span class="dot ${d.status}"></span>${esc(d.name)}</button>`).join("") + `</div>`;
 
   if (m.device) {
     const dev = S.devices.find((d) => d.id === m.device);
-    h += `<div class="label">Save in</div>`;
+    h += `<div class="label">${m.get ? "Choose files" : "Save in"}</div>`;
     if (m.error) h += `<div class="error">${esc(m.error)}</div>`;
     if (!m.roots && !m.error) h += `<p class="muted">Asking ${esc(dev ? dev.name : "the phone")} for its folders…</p>`;
     else if (m.roots && !m.folder) {
@@ -464,10 +470,25 @@ function renderSend(el) {
         <button data-act="crumb" data-n="0">${esc(m.folder.label)}</button>` +
         m.path.map((p, i) => `<span>›</span><button data-act="crumb" data-n="${i + 1}">${esc(p)}</button>`).join("") + `</div>`;
       if (m.dirs === null) h += `<p class="muted">Loading…</p>`;
-      else h += `<div class="rows">` + (m.dirs.length ? m.dirs.map((d, i) => `<button class="r" data-act="sub" data-i="${i}"><span class="ic">${icon("folder")}</span>
+      else if (!(m.get && !m.dirs.length)) h += `<div class="rows">` + (m.dirs.length ? m.dirs.map((d, i) => `<button class="r" data-act="sub" data-i="${i}"><span class="ic">${icon("folder")}</span>
           <span class="grow">${esc(d)}</span><svg class="i chev" viewBox="0 0 24 24"><use href="#i-chev"/></svg></button>`).join("")
-          : `<div class="r"><span class="grow small">No subfolders here.</span></div>`) + `</div>`;
+          : m.get ? "" : `<div class="r"><span class="grow small">No subfolders here.</span></div>`) + `</div>`;
+      if (m.get && m.dirs !== null) {
+        h += m.list.length ? `<div class="rows" style="margin-top:8px">` + m.list.map((f, i) => `<button class="r" data-act="pickfile" data-i="${i}">
+            <span class="ic">${icon("file")}</span><span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${size(f.size)} · ${ago(new Date(f.modified).toISOString())}</div></span>
+            <span class="check ${m.pick.has(f.name) ? "on" : ""}">${m.pick.has(f.name) ? icon("check") : ""}</span></button>`).join("") + `</div>`
+          : `<p class="small">No files here${m.dirs.length ? "; open a folder above" : ""}.</p>`;
+      }
     }
+  }
+  if (m.get) {
+    const chosen = m.list.filter((f) => m.pick.has(f.name));
+    const sum = chosen.reduce((s, f) => s + f.size, 0);
+    const to = (S.folders.find((f) => f.default) || {label: "Downloads"}).label;
+    h += `<div class="foot"><button class="btn big" data-act="dofetch" ${chosen.length ? "" : "disabled"}>${icon("down")}
+      ${chosen.length ? `Get ${chosen.length > 1 ? chosen.length + " files" : esc(chosen[0].name)} (${size(sum)}) into ${esc(to)}` : !m.device ? "Choose a phone" : "Choose files"}</button></div>`;
+    el.innerHTML = h;
+    return;
   }
   const where = m.folder ? [m.folder.label, ...m.path].join(" / ") : "";
   const ready = m.files.length && m.device && m.folder;
@@ -489,6 +510,12 @@ document.addEventListener("click", async (ev) => {
       case "dismiss": return api("/api/dismiss", {id: t.dataset.id});
       case "pair": await api("/api/pair", {}); return openModal({kind: "pair"});
       case "send": return openSend({device: t.dataset.id});
+      case "get": return openSend({device: t.dataset.id, get: true});
+      case "pickfile": { const n = m.list[+t.dataset.i].name; m.pick.has(n) ? m.pick.delete(n) : m.pick.add(n); return renderModal(); }
+      case "dofetch": {
+        await api("/api/fetch", {device: m.device, folder: m.folder.key, folderLabel: m.folder.label, path: m.path.join("/"), names: [...m.pick]});
+        return closeModal();
+      }
       case "devmenu": return openModal({kind: "devmenu", id: t.dataset.id});
       case "forget": {
         const d = S.devices.find((x) => x.id === t.dataset.id);

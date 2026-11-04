@@ -4,11 +4,9 @@ package server
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,13 +14,13 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/NikhilChinna9579/lan-share/windows/internal/files"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/identity"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/protocol"
+	"github.com/NikhilChinna9579/lan-share/windows/internal/transfer"
 	"github.com/NikhilChinna9579/lan-share/windows/internal/trust"
 )
 
@@ -40,6 +38,8 @@ const (
 	EventReceived
 	EventFailed
 	EventProgress // while receiving: Bytes so far of Total, file Name
+	EventSending  // while a device fetches from us: Bytes so far of Total
+	EventSent     // a device fetched files from us: Count files, Bytes total
 )
 
 // Event is reported to the UI through Server.OnEvent.
@@ -233,6 +233,18 @@ func (s *Server) handle(c *tls.Conn) {
 				s.emit(Event{Kind: EventFailed, DeviceID: peerID, Device: peer.Name, Err: err})
 				return
 			}
+		case "fetch_request":
+			var req protocol.FetchRequest
+			if json.Unmarshal(raw, &req) != nil {
+				return
+			}
+			s.track(req.TransferID, c)
+			err = s.serveFetch(conn, peerID, peer.Name, req)
+			s.track(req.TransferID, nil)
+			if err != nil {
+				s.emit(Event{Kind: EventFailed, DeviceID: peerID, Device: peer.Name, Transfer: req.TransferID, Err: err})
+				return
+			}
 		default:
 			err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "unknown_type"})
 		}
@@ -335,12 +347,13 @@ func (s *Server) receive(conn io.ReadWriter, peerID, from string, offer protocol
 		return reject("bad_folder")
 	}
 	names := make([]string, len(offer.Files))
+	sizes := make([]int64, len(offer.Files))
 	for i, f := range offer.Files {
 		n, err := files.SanitizeName(f.Name)
 		if err != nil || f.Size < 0 {
 			return reject("bad_name")
 		}
-		names[i] = n
+		names[i], sizes[i] = n, f.Size
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return reject("bad_folder")
@@ -348,67 +361,79 @@ func (s *Server) receive(conn io.ReadWriter, peerID, from string, offer protocol
 	if err := protocol.WriteFrame(conn, protocol.FileAccept{Type: "file_accept", TransferID: offer.TransferID}); err != nil {
 		return err
 	}
-
-	var parts []string // .part files still on disk; deleted if we fail
-	defer func() {
-		for _, p := range parts {
-			os.Remove(p)
-		}
-	}()
-
-	saved := make([]string, 0, len(offer.Files))
-	var total, doneBefore int64
-	for _, f := range offer.Files {
-		total += f.Size
+	var src io.Reader = conn
+	if s.Throttle > 0 {
+		src = &slowReader{r: conn, rate: s.Throttle}
 	}
-	for i, f := range offer.Files {
-		start := time.Now()
-		part := files.UniquePath(dir, names[i]+".part")
-		out, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-		if err != nil {
-			protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "io", Message: err.Error()})
-			return err
-		}
-		parts = append(parts, part)
-		h := sha256.New()
-		pw := &progressWriter{s: s, ev: Event{Kind: EventProgress, DeviceID: peerID, Device: from, Transfer: offer.TransferID,
-			Name: names[i], Total: total, Index: i, Count: len(names)}, done: doneBefore}
-		var src io.Reader = conn
-		if s.Throttle > 0 {
-			src = &slowReader{r: conn, rate: s.Throttle}
-		}
-		_, err = io.CopyN(io.MultiWriter(out, h, pw), src, f.Size)
-		doneBefore += f.Size
-		if cerr := out.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			return fmt.Errorf("receiving %s: %w", names[i], err)
-		}
-
-		typ, raw, err := protocol.ReadFrame(conn)
-		if err != nil {
-			return err
-		}
-		var end protocol.FileEnd
-		if typ != "file_end" || json.Unmarshal(raw, &end) != nil || end.Index != i {
-			protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "bad_frame"})
-			return errors.New("expected file_end")
-		}
-		if end.SHA256 != hex.EncodeToString(h.Sum(nil)) {
-			protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "checksum"})
-			return fmt.Errorf("%s: checksum mismatch", names[i])
-		}
-		final := files.UniquePath(dir, names[i])
-		if err := os.Rename(part, final); err != nil {
-			return err
-		}
-		parts = parts[:len(parts)-1]
-		saved = append(saved, filepath.Base(final))
-		s.emit(Event{Kind: EventReceived, DeviceID: peerID, Device: from, Path: final, Bytes: f.Size, Duration: time.Since(start),
-			Folder: offer.Folder, Transfer: offer.TransferID, Done: i == len(offer.Files)-1})
+	saved, err := transfer.Receive(conn, src, dir, names, sizes,
+		func(done, total int64, i int) {
+			s.emit(Event{Kind: EventProgress, DeviceID: peerID, Device: from, Transfer: offer.TransferID,
+				Name: names[i], Bytes: done, Total: total, Index: i, Count: len(names)})
+		},
+		func(sv transfer.Saved) {
+			s.emit(Event{Kind: EventReceived, DeviceID: peerID, Device: from, Path: sv.Path, Bytes: sv.Size, Duration: sv.Took,
+				Folder: offer.Folder, Transfer: offer.TransferID, Done: sv.Index == len(names)-1})
+		})
+	if err != nil {
+		return err
 	}
 	return protocol.WriteFrame(conn, protocol.TransferDone{Type: "transfer_done", TransferID: offer.TransferID, Saved: saved})
+}
+
+// serveFetch sends files a paired device asked for (fetch_request), from a shared
+// folder only. It reports progress as EventSending and the end as EventSent.
+func (s *Server) serveFetch(conn io.ReadWriter, peerID, from string, req protocol.FetchRequest) error {
+	fail := func(code, msg string) error {
+		return protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: code, Message: msg})
+	}
+	dir, err := s.Folders.Resolve(req.Folder, req.Path)
+	if err != nil {
+		return fail("bad_folder", "not a shared folder")
+	}
+	paths, sizes, err := transfer.Check(dir, req.Files, files.IsHidden)
+	if err != nil {
+		return fail("not_found", err.Error())
+	}
+	offer := protocol.FileOffer{Type: "file_offer", TransferID: req.TransferID, Folder: req.Folder, Path: req.Path}
+	for i := range paths {
+		offer.Files = append(offer.Files, protocol.OfferFile{Name: req.Files[i], Size: sizes[i]})
+	}
+	if err := protocol.WriteFrame(conn, offer); err != nil {
+		return err
+	}
+	typ, _, err := protocol.ReadFrame(conn)
+	if err != nil {
+		return err
+	}
+	if typ != "file_accept" {
+		return nil // the device changed its mind
+	}
+	start := time.Now()
+	var total int64
+	for _, sz := range sizes {
+		total += sz
+	}
+	var last time.Time
+	err = transfer.Stream(conn, paths, sizes, func(sent, total int64, i int) {
+		if time.Since(last) > 150*time.Millisecond || sent == total {
+			last = time.Now()
+			s.emit(Event{Kind: EventSending, DeviceID: peerID, Device: from, Transfer: req.TransferID,
+				Name: req.Files[i], Bytes: sent, Total: total, Index: i, Count: len(paths)})
+		}
+	})
+	if err != nil {
+		return err
+	}
+	typ, _, err = protocol.ReadFrame(conn)
+	if err != nil {
+		return err
+	}
+	if typ != "transfer_done" {
+		return errors.New("the device didn't confirm the files")
+	}
+	s.emit(Event{Kind: EventSent, DeviceID: peerID, Device: from, Transfer: req.TransferID, Folder: req.Folder,
+		Name: req.Files[0], Bytes: total, Count: len(paths), Duration: time.Since(start), Done: true})
+	return nil
 }
 
 func (s *Server) emit(e Event) {
@@ -427,25 +452,6 @@ func (s *slowReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
 	time.Sleep(time.Duration(int64(n) * int64(time.Second) / s.rate))
 	return n, err
-}
-
-// progressWriter reports receive progress at most ~6 times a second.
-type progressWriter struct {
-	s    *Server
-	ev   Event
-	done int64
-	last time.Time
-}
-
-func (p *progressWriter) Write(b []byte) (int, error) {
-	p.done += int64(len(b))
-	if time.Since(p.last) > 150*time.Millisecond {
-		p.last = time.Now()
-		ev := p.ev
-		ev.Bytes = p.done
-		p.s.emit(ev)
-	}
-	return len(b), nil
 }
 
 func hostOf(a net.Addr) string {
