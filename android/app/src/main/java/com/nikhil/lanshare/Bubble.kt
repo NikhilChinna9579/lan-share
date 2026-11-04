@@ -38,7 +38,7 @@ class Bubble(private val ctx: Context) {
 
     /** Shows or hides the bubble to match the setting and permission. */
     fun refresh() {
-        if (enabled(ctx) && Settings.canDrawOverlays(ctx) && !hiddenForAssistant) show() else hide()
+        if (enabled(ctx) && Settings.canDrawOverlays(ctx) && !hiddenForAssistant && !hiddenForApp) show() else hide()
     }
 
     private fun show() {
@@ -135,6 +135,9 @@ class Bubble(private val ctx: Context) {
 
         /** True while the assistant is open: the bubble steps aside. */
         @Volatile var hiddenForAssistant = false
+
+        /** True while LAN Share's own screen is open (it has its own mic button). */
+        @Volatile var hiddenForApp = false
 
         fun enabled(ctx: Context) = ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE).getBoolean("on", false)
 

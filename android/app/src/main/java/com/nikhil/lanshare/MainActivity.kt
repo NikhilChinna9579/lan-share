@@ -127,10 +127,14 @@ class MainActivity : Activity() {
         super.onStart()
         Hub.listen(onHub)
         presence.start()
+        Bubble.hiddenForApp = true
+        Bubble.update()
         render()
     }
 
     override fun onStop() {
+        Bubble.hiddenForApp = false
+        Bubble.update()
         presence.stop()
         Hub.unlisten(onHub)
         super.onStop()
@@ -552,7 +556,8 @@ class MainActivity : Activity() {
     private fun confirmForget(d: Device) {
         android.app.AlertDialog.Builder(this)
             .setTitle("Forget ${d.name}?")
-            .setMessage("It won't be able to send to this phone, and you'll need to scan its QR code again to pair.")
+            .setMessage("It won't be able to send to this phone, and you'll need to pair again " +
+                if (d.isPhone) "with a code." else "by scanning its QR code.")
             .setPositiveButton("Forget") { _, _ ->
                 DeviceStore.remove(this, d.id)
                 Log.i(TAG, "forgot ${d.name}")

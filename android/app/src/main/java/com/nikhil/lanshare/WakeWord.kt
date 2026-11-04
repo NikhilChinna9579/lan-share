@@ -25,7 +25,9 @@ import java.nio.channels.FileChannel
  * and synthetic recordings; see .github/testdata).
  */
 class WakeWord(ctx: Context) : AutoCloseable {
-    private val mel = Interpreter(asset(ctx, "melspectrogram.tflite"))
+    // The mel model's input size is only fixed after loading, which TFLite's default
+    // XNNPACK delegate can't handle ("BytesRequired ... overflowed"): load it without.
+    private val mel = Interpreter(asset(ctx, "melspectrogram.tflite"), Interpreter.Options().setUseXNNPACK(false).setNumThreads(1))
     private val emb = Interpreter(asset(ctx, "embedding_model.tflite"))
     private val ww = Interpreter(asset(ctx, "hey_jarvis.tflite"))
 

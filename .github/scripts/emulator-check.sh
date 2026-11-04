@@ -72,7 +72,8 @@ tap_text() {
 import re, sys, xml.etree.ElementTree as ET
 want, path = sys.argv[1], sys.argv[2]
 for n in ET.parse(path).iter("node"):
-    if want in (n.get("text") or "") or n.get("resource-id", "").endswith("/" + want):
+    # Case doesn't matter: Android shows dialog buttons in capitals ("FORGET").
+    if want.lower() in (n.get("text") or "").lower() or n.get("resource-id", "").endswith("/" + want):
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
         print((x1 + x2) // 2, (y1 + y2) // 2); break
 PY
@@ -268,8 +269,9 @@ bail_if_crashed "assistant"
 # ---------------------------------------------------------------- 8. floating bubble
 A shell appops set $PKG SYSTEM_ALERT_WINDOW allow
 mark; hook demo.txt bubble; app 3
+A shell input keyevent KEYCODE_HOME   # the bubble is for other apps: it hides on LAN Share's own screen
 expect 15 'bubble shown' "bubble appears over other apps"
-A shell input keyevent KEYCODE_HOME; sleep 2; shot 17-bubble-on-home
+sleep 1; shot 17-bubble-on-home
 until_ok 10 "applog | tail -n +$((MARK + 1)) | grep -qE 'ui: bubble at '"
 BXY=$(applog | tail -n +$((MARK + 1)) | grep -oE 'ui: bubble at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
 mark; A shell input tap "${BXY%,*}" "${BXY#*,}"
