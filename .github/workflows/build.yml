@@ -1,12 +1,19 @@
-name: build
+name: build and test
 
-# Runs on every push and pull request. Download the .exe and the APK from the
-# run's "Artifacts" section on GitHub (Actions tab → pick the run → scroll down).
+# Runs only when started by hand (Actions tab → "build and test" → Run workflow), so
+# GitHub Actions minutes are spent once per batch of features, not on every push.
+# All jobs run in parallel. Choose which suites to run; the builds are always made.
 on:
-  push:
-    branches-ignore: [builds, checks]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      windows_tests:
+        description: "Windows app tests (Linux + real Windows)"
+        type: boolean
+        default: true
+      android_tests:
+        description: "Android emulator test (the slowest, ~10 min)"
+        type: boolean
+        default: true
 
 jobs:
   windows:
@@ -48,6 +55,7 @@ jobs:
 
   windows-e2e:
     name: Windows app end-to-end (window + simulated phone)
+    if: inputs.windows_tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -74,6 +82,7 @@ jobs:
 
   windows-native-e2e:
     name: Windows app end-to-end on real Windows
+    if: inputs.windows_tests
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -128,12 +137,76 @@ jobs:
           name: lanshare-android
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
+  emulator:
+    name: Android app on an emulator, against the real laptop program
+    if: inputs.android_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space (the emulator needs several GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/local/lib/node_modules \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift /usr/local/julia* || true
+          df -h /
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: windows/go.mod
+      - name: Build APK
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+      - name: Build laptop program (Linux build of the Windows app)
+        working-directory: windows
+        run: go build -o ../bin/lanshare ./cmd/lanshare
+      - name: Run on emulator
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          cores: 3
+          disk-size: 3000M
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # The check itself is capped at 12 minutes; every command inside has its own limit.
+          script: timeout 720 bash .github/scripts/emulator-check.sh
+      - name: Publish screenshots to the checks branch
+        if: always()
+        run: |
+          mkdir -p check-out && cd check-out
+          cat RESULTS.txt 2>/dev/null || true
+          printf 'branch: %s\ncommit: %s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" > RUN.txt
+          git init -q -b checks
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add . && git commit -qm "Checks from $GITHUB_REF_NAME @ ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" checks
+
   # Puts the latest .exe and APK on the "builds" branch, replacing the previous ones,
   # so they can be downloaded straight from GitHub's file view without unzipping.
   publish:
     name: Publish latest builds
-    needs: [windows, windows-e2e, windows-native-e2e, android]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [windows, windows-e2e, windows-native-e2e, android, emulator]
+    # Publish only if every suite that ran passed (skipped suites don't block).
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     permissions:
       contents: write
