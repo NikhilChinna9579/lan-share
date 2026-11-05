@@ -19,7 +19,14 @@ import kotlin.math.abs
  * it snaps to the nearest side. Tap it to open the assistant. Lives inside the
  * receiving service, so it stays as long as LAN Share is ready to receive.
  */
-class Bubble(private val ctx: Context) {
+class Bubble(service: Context) {
+    // Android 11+ wants windows over other apps added through a window context made for
+    // that window type (a plain service context can lose them when the app leaves the screen).
+    private val ctx: Context = if (android.os.Build.VERSION.SDK_INT >= 30) {
+        val display = service.getSystemService(android.hardware.display.DisplayManager::class.java)
+            .getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        service.createWindowContext(display, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+    } else service
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private val prefs = ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE)
     private var view: ImageView? = null
@@ -33,12 +40,14 @@ class Bubble(private val ctx: Context) {
     ).apply {
         gravity = Gravity.TOP or Gravity.START
         x = prefs.getInt("x", -1)
-        y = prefs.getInt("y", -1) // first time: bottom right, out of the way (set in show)
+        y = prefs.getInt("y2", -1) // first time: right edge, a third down (set in show)
     }
 
     /** Shows or hides the bubble to match the setting and permission. */
     fun refresh() {
-        if (enabled(ctx) && Settings.canDrawOverlays(ctx) && !hiddenForAssistant) show() else hide()
+        val on = enabled(ctx); val allowed = Settings.canDrawOverlays(ctx)
+        Log.d("LanShare", "bubble: refresh (on=$on allowed=$allowed assistant=$hiddenForAssistant shown=${view != null})")
+        if (on && allowed && !hiddenForAssistant) show() else hide()
     }
 
     private fun show() {
@@ -46,15 +55,14 @@ class Bubble(private val ctx: Context) {
         val screenW = ctx.resources.displayMetrics.widthPixels
         val screenH = ctx.resources.displayMetrics.heightPixels
         if (params.x < 0) params.x = screenW - size - dp(8)
-        if (params.y < 0) params.y = screenH - size - dp(150)
+        if (params.y < 0) params.y = screenH / 3 // clear of most apps' bottom buttons
         val v = ImageView(ctx).apply {
             setImageResource(R.drawable.ic_mic)
             imageTintList = android.content.res.ColorStateList.valueOf(ctx.getColor(R.color.on_primary))
             setBackgroundResource(R.drawable.bg_bubble)
             setPadding(dp(15), dp(15), dp(15), dp(15))
-            elevation = dp(6).toFloat()
+            elevation = dp(8).toFloat()
             contentDescription = "LAN Share assistant"
-            alpha = 0.92f
         }
         v.setOnTouchListener(Drag())
         runCatching { wm.addView(v, params) }
@@ -132,7 +140,7 @@ class Bubble(private val ctx: Context) {
             }
             start()
         }
-        prefs.edit().putInt("x", target).putInt("y", params.y).apply()
+        prefs.edit().putInt("x", target).putInt("y2", params.y).apply()
     }
 
     private fun open() {

@@ -42,6 +42,10 @@ class ReceiveService : Service() {
             .setContentText("From " + DeviceStore.all(this).joinToString { it.name }.ifEmpty { "your laptops" })
             .setContentIntent(openApp())
             .setOngoing(true)
+            // Always a way to the assistant, bubble or not.
+            .addAction(Notification.Action.Builder(null, "🎤 Assistant", PendingIntent.getActivity(this, 3,
+                Intent(this, AssistantActivity::class.java).putExtra("listen", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_IMMUTABLE)).build())
             .build()
         readyNote = ready
         foreground(false)

@@ -686,6 +686,22 @@ class MainActivity : Activity() {
             chip = if (media) "On" else null, enabled = !media, dismiss = false) {
             requestPermissions(SharedFolders.mediaPermissions(), REQUEST_MEDIA)
         })
+        // When something misbehaves: LAN Share's own log (nothing else from the phone).
+        sheet.add(Sheet.Row(R.drawable.ic_document, "Share a diagnostic log", sub = "LAN Share's own log, to help find a problem") {
+            worker.execute {
+                val log = runCatching {
+                    val p = ProcessBuilder("logcat", "-d", "-v", "time", "-t", "3000", "-s", "LanShare:V", "AndroidRuntime:E", "WindowManager:W")
+                        .redirectErrorStream(true).start()
+                    p.inputStream.bufferedReader().readText().also { p.waitFor() }
+                }.getOrElse { "Couldn't read the log: $it" }
+                val head = "LAN Share ${packageManager.getPackageInfo(packageName, 0).versionName} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · ${Build.MANUFACTURER} ${Build.MODEL}\n" +
+                    "bubble: on=${Bubble.enabled(this)} allowed=${android.provider.Settings.canDrawOverlays(this)} problem=${Bubble.problem} service=${ReceiveService.running}\n\n"
+                ui {
+                    startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(Intent.EXTRA_SUBJECT, "LAN Share diagnostic log").putExtra(Intent.EXTRA_TEXT, head + log.takeLast(200_000)), "Share the log"))
+                }
+            }
+        })
         // Battery saving can pause the app, so laptops see the phone as offline.
         val pm = getSystemService(android.os.PowerManager::class.java)
         val unrestricted = pm.isIgnoringBatteryOptimizations(packageName)
