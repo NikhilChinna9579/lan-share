@@ -35,7 +35,10 @@ class Bubble(service: Context) {
     private val params = WindowManager.LayoutParams(
         size, size,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        // LAYOUT_IN_SCREEN: x and y count from the screen's top-left corner (not from below
+        // the status bar), so keeping it clear of the system bars works out exactly.
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
         PixelFormat.TRANSLUCENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.START
@@ -140,7 +143,8 @@ class Bubble(service: Context) {
         val (tx, ty) = targetXY()
         val p = WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT).apply {
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START; x = tx; y = ty
         }
         runCatching { wm.addView(t, p); target = t; t.alpha = 0f; t.animate().alpha(1f).setDuration(120).start() }
@@ -226,7 +230,10 @@ class Bubble(service: Context) {
         }
         prefs.edit().putInt("x", target).putInt("y2", params.y).apply()
         Log.i("LanShare", "bubble moved to $target,${params.y} (allowed y ${s[0]}..${s[1]})")
-        Log.d("LanShare", "ui: bubble at ${target + size / 2},${params.y + size / 2}")
+        v.postDelayed({ // where it really is on screen (tests drag it from there)
+            val xy = IntArray(2).also { v.getLocationOnScreen(it) }
+            Log.d("LanShare", "ui: bubble at ${xy[0] + v.width / 2},${xy[1] + v.height / 2}")
+        }, 300)
     }
 
     private fun open() {

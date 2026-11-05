@@ -318,9 +318,12 @@ sleep 2; mark; A shell input swipe "${BXY%,*}" "${BXY#*,}" 20 $((SH - 5)) 900
 expect 10 'bubble moved to ' "dragging the bubble"
 L=$(applog | tail -n +$((MARK + 1)) | grep -oE 'bubble moved to [0-9]+,[0-9]+ \(allowed y [0-9]+\.\.[0-9]+\)' | tail -1)
 Y=$(echo "$L" | sed -E 's/.*,([0-9]+) \(.*/\1/'); MAXY=$(echo "$L" | sed -E 's/.*\.\.([0-9]+)\)/\1/')
-[ -n "$Y" ] && [ "$Y" -le "$MAXY" ] && pass "…it stays clear of the navigation bar ($L)" || fail "bubble went under the navigation bar ($L)"
+sleep 1
+# Where it really is on screen: its bottom must be above the navigation bar (≥ 40 px from the bottom).
+P=$(applog | tail -n +$((MARK + 1)) | grep -oE 'ui: bubble at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
+[ -n "$Y" ] && [ "$Y" -le "$MAXY" ] && [ -n "$P" ] && [ "${P#*,}" -lt $((SH - 120)) ] \
+  && pass "…it stays clear of the navigation bar (centre at $P, screen $SH high)" || fail "bubble went under the navigation bar ($L; centre $P; screen $SH)"
 # Drag it onto the ✕ at the bottom: hidden; opening LAN Share brings it back.
-P=$(applog | grep -oE 'ui: bubble at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
 T=$(applog | grep -oE 'ui: bubble target at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
 mark; A shell input swipe "${P%,*}" "${P#*,}" "${T%,*}" "${T#*,}" 1200
 expect 10 'bubble dismissed' "dragging the bubble onto the ✕ puts it away"
