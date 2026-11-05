@@ -47,15 +47,17 @@ class Bubble(service: Context) {
     fun refresh() {
         val on = enabled(ctx); val allowed = Settings.canDrawOverlays(ctx)
         Log.d("LanShare", "bubble: refresh (on=$on allowed=$allowed assistant=$hiddenForAssistant shown=${view != null})")
-        if (on && allowed && !hiddenForAssistant) show() else hide()
+        val away = prefs.getBoolean("dismissed", false)
+        if (on && allowed && !hiddenForAssistant && !away) show() else hide()
     }
 
     private fun show() {
         if (view != null) return
-        val screenW = ctx.resources.displayMetrics.widthPixels
-        val screenH = ctx.resources.displayMetrics.heightPixels
-        if (params.x < 0) params.x = screenW - size - dp(8)
-        if (params.y < 0) params.y = screenH / 3 // clear of most apps' bottom buttons
+        val s = safe()
+        if (params.x < 0 || params.x > s[2] - size) params.x = s[2] - size - dp(8)
+        // First time a third down; and a spot saved behind a system bar (it could be dragged
+        // there before) comes back into view.
+        params.y = if (params.y < 0) (s[0] + s[1]) / 3 else params.y.coerceIn(s[0], s[1])
         val v = ImageView(ctx).apply {
             setImageResource(R.drawable.ic_mic)
             imageTintList = android.content.res.ColorStateList.valueOf(ctx.getColor(R.color.on_primary))
@@ -80,6 +82,8 @@ class Bubble(service: Context) {
                     } else {
                         val xy = IntArray(2).also { v.getLocationOnScreen(it) }
                         Log.d("LanShare", "ui: bubble at ${xy[0] + v.width / 2},${xy[1] + v.height / 2}")
+                        val (tx, ty) = targetXY()
+                        Log.d("LanShare", "ui: bubble target at ${tx + size / 2},${ty + size / 2}")
                     }
                 }, 600)
             }
@@ -90,9 +94,62 @@ class Bubble(service: Context) {
     }
 
     fun hide() {
+        hideTarget()
         view?.let { runCatching { wm.removeView(it) } }
         if (view != null) Log.i("LanShare", "bubble hidden")
         view = null
+    }
+
+    /** The area the bubble may sit in: clear of the status bar, notch and navigation bar. */
+    private fun safe(): IntArray { // minY, maxY, width
+        val w: Int; val h: Int; val top: Int; val bottom: Int
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val m = wm.currentWindowMetrics
+            val ins = m.windowInsets.getInsetsIgnoringVisibility(
+                android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+            w = m.bounds.width(); h = m.bounds.height(); top = ins.top; bottom = ins.bottom
+        } else {
+            w = ctx.resources.displayMetrics.widthPixels; h = ctx.resources.displayMetrics.heightPixels
+            top = dp(32); bottom = dp(56)
+        }
+        return intArrayOf(top + dp(8), h - bottom - size - dp(8), w)
+    }
+
+    // The ✕ shown at the bottom while dragging: drop the bubble on it to put it away.
+    private var target: ImageView? = null
+    private var overTarget = false
+
+    private fun targetXY(): Pair<Int, Int> {
+        val s = safe()
+        return (s[2] - size) / 2 to s[1] - dp(24)
+    }
+
+    private fun showTarget() {
+        if (target != null) return
+        val t = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = android.content.res.ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0xCC202124.toInt())
+                setStroke(dp(2), 0xFFFFFFFF.toInt())
+            }
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            contentDescription = "Drop here to hide the bubble"
+        }
+        val (tx, ty) = targetXY()
+        val p = WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.TOP or Gravity.START; x = tx; y = ty
+        }
+        runCatching { wm.addView(t, p); target = t; t.alpha = 0f; t.animate().alpha(1f).setDuration(120).start() }
+    }
+
+    private fun hideTarget() {
+        target?.let { runCatching { wm.removeView(it) } }
+        target = null
+        overTarget = false
     }
 
     private inner class Drag : View.OnTouchListener {
@@ -112,26 +169,53 @@ class Bubble(service: Context) {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX
                     val dy = e.rawY - downY
-                    if (!moved && (abs(dx) > slop || abs(dy) > slop)) moved = true
+                    if (!moved && (abs(dx) > slop || abs(dy) > slop)) { moved = true; showTarget() }
                     if (moved) {
-                        params.x = startX + dx.toInt()
-                        params.y = (startY + dy.toInt()).coerceIn(0, ctx.resources.displayMetrics.heightPixels - size)
+                        val s = safe()
+                        val (tx, ty) = targetXY()
+                        val x = (startX + dx.toInt()).coerceIn(0, s[2] - size)
+                        val y = (startY + dy.toInt()).coerceIn(s[0], s[1])
+                        // Close to the ✕: the bubble jumps onto it (as chat heads do).
+                        val near = kotlin.math.hypot((x - tx).toDouble(), (y - ty).toDouble()) < dp(80)
+                        if (near != overTarget) {
+                            overTarget = near
+                            target?.animate()?.scaleX(if (near) 1.3f else 1f)?.scaleY(if (near) 1.3f else 1f)?.setDuration(100)?.start()
+                        }
+                        params.x = if (near) tx else x
+                        params.y = if (near) ty else y
                         runCatching { wm.updateViewLayout(v, params) }
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
-                    if (moved) snap(v) else if (e.actionMasked == MotionEvent.ACTION_UP) open()
+                    val drop = moved && overTarget
+                    hideTarget()
+                    when {
+                        drop -> dismiss()
+                        moved -> snap(v)
+                        e.actionMasked == MotionEvent.ACTION_UP -> open()
+                    }
                 }
             }
             return true
         }
     }
 
+    /** Dropped on the ✕: hidden until LAN Share is opened again (or switched back on). */
+    private fun dismiss() {
+        prefs.edit().putBoolean("dismissed", true).apply()
+        hide()
+        Log.i("LanShare", "bubble dismissed")
+        runCatching {
+            android.widget.Toast.makeText(ctx, "Bubble hidden. Open LAN Share to bring it back.", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     /** Glides to the nearest side of the screen and remembers the spot. */
     private fun snap(v: View) {
-        val w = ctx.resources.displayMetrics.widthPixels
-        val target = if (params.x + size / 2 < w / 2) dp(8) else w - size - dp(8)
+        val s = safe()
+        val target = if (params.x + size / 2 < s[2] / 2) dp(8) else s[2] - size - dp(8)
+        params.y = params.y.coerceIn(s[0], s[1])
         ValueAnimator.ofInt(params.x, target).apply {
             duration = 180
             addUpdateListener {
@@ -141,6 +225,8 @@ class Bubble(service: Context) {
             start()
         }
         prefs.edit().putInt("x", target).putInt("y2", params.y).apply()
+        Log.i("LanShare", "bubble moved to $target,${params.y} (allowed y ${s[0]}..${s[1]})")
+        Log.d("LanShare", "ui: bubble at ${target + size / 2},${params.y + size / 2}")
     }
 
     private fun open() {
@@ -169,7 +255,17 @@ class Bubble(service: Context) {
         }
 
         fun setEnabled(ctx: Context, on: Boolean) {
-            ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE).edit().putBoolean("on", on).apply()
+            ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE).edit().putBoolean("on", on).putBoolean("dismissed", false).apply()
+            update(ctx)
+        }
+
+        /** Opening LAN Share brings back a bubble that was dragged onto the ✕. */
+        fun bringBack(ctx: Context) {
+            val p = ctx.getSharedPreferences("bubble", Context.MODE_PRIVATE)
+            if (p.getBoolean("dismissed", false)) {
+                p.edit().putBoolean("dismissed", false).apply()
+                Log.i("LanShare", "bubble back (LAN Share opened)")
+            }
             update(ctx)
         }
 

@@ -312,6 +312,21 @@ expect 10 'bubble tapped' "tapping the bubble"
 expect 10 'assistant: ready' "bubble opens the assistant"
 shot 18-assistant-from-bubble
 A shell input keyevent KEYCODE_BACK
+# Drag the bubble into the bottom corner: it must stay above the navigation bar.
+SH=$(A shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1 | cut -dx -f2)
+sleep 2; mark; A shell input swipe "${BXY%,*}" "${BXY#*,}" 20 $((SH - 5)) 900
+expect 10 'bubble moved to ' "dragging the bubble"
+L=$(applog | tail -n +$((MARK + 1)) | grep -oE 'bubble moved to [0-9]+,[0-9]+ \(allowed y [0-9]+\.\.[0-9]+\)' | tail -1)
+Y=$(echo "$L" | sed -E 's/.*,([0-9]+) \(.*/\1/'); MAXY=$(echo "$L" | sed -E 's/.*\.\.([0-9]+)\)/\1/')
+[ -n "$Y" ] && [ "$Y" -le "$MAXY" ] && pass "…it stays clear of the navigation bar ($L)" || fail "bubble went under the navigation bar ($L)"
+# Drag it onto the ✕ at the bottom: hidden; opening LAN Share brings it back.
+P=$(applog | grep -oE 'ui: bubble at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
+T=$(applog | grep -oE 'ui: bubble target at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
+mark; A shell input swipe "${P%,*}" "${P#*,}" "${T%,*}" "${T#*,}" 1200
+expect 10 'bubble dismissed' "dragging the bubble onto the ✕ puts it away"
+mark; app 3
+expect 15 'bubble back \(LAN Share opened\)' "opening LAN Share brings it back"
+expect 10 'bubble shown' "…and it's on screen again"
 bail_if_crashed "bubble"
 
 # ---------------------------------------------------------------- 8b. phone <-> phone

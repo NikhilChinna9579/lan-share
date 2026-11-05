@@ -116,7 +116,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
-        Bubble.update(this) // back from granting "Display over other apps"
+        Bubble.bringBack(this) // opening LAN Share brings a dismissed bubble back (and covers "back from granting the permission")
         main.postDelayed({ Bubble.update(this); foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }, 800) // some phones report the permission late
         if (!hooksRan) {
             hooksRan = true
