@@ -383,10 +383,21 @@ bail_if_crashed "wake word"
 # ---------------------------------------------------------------- 8d. the phone's own "Get files" screen
 # Tap a file = open it (fetched into a temporary cache); again = straight from the cache;
 # tick + Get = saved in Downloads (copied from the cache, no second download).
-head -c 50000 /dev/urandom > "$HOME/Documents/Plan.pdf"
+# A long folder (40 photos), so the Get button must stay on screen without scrolling.
+for i in $(seq -w 1 40); do head -c 2000 /dev/urandom > "$HOME/Documents/IMG_20261101_$i.jpg"; done
+sleep 1
+head -c 50000 /dev/urandom > "$HOME/Documents/Plan.pdf"   # newest: listed first
 get_docs() { mark; hook demo.txt get_sheet; app 4
   until_ok 30 "seen 'row: Documents'" && until_ok 10 "tap_text Documents" && until_ok 20 "seen 'row: Plan.pdf'"; }
+primary_on_screen() {
+  local line h; h=$(A shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1 | cut -dx -f2)
+  line=$(applog | tail -n +$((MARK + 1)) | grep -oE 'ui: primary bottom [0-9]+' | tail -1 | grep -oE '[0-9]+$')
+  [ -n "$line" ] && [ -n "$h" ] && [ "$line" -le "$h" ]
+}
 if get_docs; then
+  until_ok 15 primary_on_screen && pass "a folder of 40+ files: the Get button stays on screen" \
+    || fail "Get button pushed off screen by a long list ($(applog | grep -oE 'ui: primary bottom [0-9]+ of [0-9]+' | tail -1))"
+  shot 08d-long-folder
   until_ok 10 "tap_text Plan.pdf"
   expect 30 'open: Plan.pdf from .*: fetched 50000 bytes' "tap a laptop's file: fetched to open it"
   expect 15 'open: (showing|no app for) Plan.pdf' "…and handed to a viewer (or a clear note if there's none)"

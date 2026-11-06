@@ -142,6 +142,9 @@
   .switch::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s; box-shadow:0 1px 2px rgba(0,0,0,.3); }
   .switch.on { background:var(--brand); } .switch.on::after { left:21px; }
   .foot { display:flex; gap:10px; margin-top:18px; }
+  /* Always visible at the bottom of a sheet, however long the list above it. */
+  .sheet .foot { position:sticky; bottom:-20px; z-index:1; background:var(--surface); margin:12px -20px -20px; padding:12px 20px 20px;
+    box-shadow:0 -1px 0 var(--line); }
   .foot .btn { flex:1; height:46px; }
   .error { color:var(--bad); font-size:13px; margin-top:10px; }
   .drop { position:fixed; inset:12px; border:3px dashed var(--brand); border-radius:24px; background:color-mix(in srgb, var(--bg) 85%, transparent);

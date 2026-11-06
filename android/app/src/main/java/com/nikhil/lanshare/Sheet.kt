@@ -133,6 +133,7 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
             setPadding(dp(16), dp(14), dp(16), dp(14))
         }
         list.addView(t)
+        fit()
         return this
     }
 
@@ -156,6 +157,10 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
             this.text = text
             isEnabled = enabled
             setOnClickListener { dialog.dismiss(); onClick() }
+            if (text != null && activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) post {
+                val xy = IntArray(2).also { getLocationOnScreen(it) } // tests check it's on screen
+                android.util.Log.d("LanShare", "ui: primary bottom ${xy[1] + height} of ${activity.resources.displayMetrics.heightPixels}")
+            }
         }
     }
 

@@ -224,11 +224,19 @@ async function step(name, fn) {
       fs.rmSync(path.join(laptopDownloads, name), { force: true });
       const src = path.join(phoneData, "inbox", "Documents", name);
       fs.mkdirSync(path.dirname(src), { recursive: true });
-      fs.writeFileSync(src, crypto.randomBytes(300_000));
+      for (let i = 1; i <= 40; i++) fs.writeFileSync(path.join(path.dirname(src), `IMG_20261101_${String(i).padStart(2, "0")}.jpg`), crypto.randomBytes(3000));
+      await sleep(50);
+      fs.writeFileSync(src, crypto.randomBytes(300_000)); // newest: listed first
       await page.locator('.dev [data-act="get"]').first().click();
       await page.locator('[data-act="root"]', { hasText: "Documents" }).click();
       await page.locator(".r", { hasText: name }).locator('[data-act="pickfile"]').click();
       await page.locator('[data-act="dofetch"]', { hasText: /Get Meeting notes\.txt .* into Downloads/ }).waitFor();
+      // However long the folder, the Get button is on screen without scrolling.
+      const inView = await page.locator('[data-act="dofetch"]').evaluate((b) => {
+        const r = b.getBoundingClientRect(), s = b.closest(".sheet").getBoundingClientRect();
+        return r.bottom <= Math.min(window.innerHeight, s.bottom) + 1 && r.top >= s.top;
+      });
+      if (!inView) throw new Error("Get button is below the fold in a long folder");
       await settle(); await page.screenshot({ path: path.join(out, "w08d-get-sheet.png") });
       await page.locator('[data-act="dofetch"]').click();
       await page.getByText(`Got ${name} from Nikhil's phone`).first().waitFor({ timeout: 15_000 });
