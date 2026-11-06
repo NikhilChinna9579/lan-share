@@ -245,7 +245,7 @@ async function step(name, fn) {
       for (let i = 1; i <= 40; i++) fs.writeFileSync(path.join(path.dirname(src), `IMG_20261101_${String(i).padStart(2, "0")}.jpg`), crypto.randomBytes(3000));
       await sleep(50);
       fs.writeFileSync(src, crypto.randomBytes(300_000)); // newest: listed first
-      await page.locator('.dev [data-act="browse"]', { hasText: "Browse" }).first().click();
+      await page.locator('.dev [data-act="browse"]').first().click();
       await page.locator(".sheet h3", { hasText: "Browse Nikhil's phone" }).waitFor();
       await page.locator('[data-act="root"]', { hasText: "Documents" }).click();
       await page.locator(".r", { hasText: name }).locator('[data-act="pickfile"]').click();

@@ -73,6 +73,9 @@
   .bar i { display:block; height:100%; background:var(--brand); border-radius:3px; transition:width .2s; }
 
   .dev { display:flex; align-items:center; gap:14px; padding:14px 14px 14px 16px; margin-bottom:10px; }
+  .dev .grow { min-width:90px; }
+  /* Narrow window: Send and Browse keep their symbols, the phone's name keeps its room. */
+  @media (max-width:600px) { .dev .btn .lbl { display:none; } .dev .btn { padding:0 12px; } .dev .btn .i { margin:0; } .dev { gap:8px; } }
   .avatar { position:relative; width:48px; height:48px; border-radius:50%; background:var(--brand-soft); color:var(--on-brand-soft); display:grid; place-items:center; flex:none; }
   .avatar svg { width:24px; height:24px; }
   .avatar .dot { position:absolute; right:-1px; bottom:-1px; width:15px; height:15px; border:2.5px solid var(--surface); }
@@ -403,8 +406,8 @@ function render() {
       else line = "Offline" + (d.lastSeen && !d.lastSeen.startsWith("0001") ? " · seen " + ago(d.lastSeen) : " · open LAN Share on the phone");
       return `<div class="card dev"><div class="avatar">${icon("phone")}<span class="dot ${dot}"></span></div>
         <div class="grow"><div class="t1">${esc(d.name)}</div><div class="t2">${line}</div></div>
-        <button class="btn tonal" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>${icon("send")}Send</button>
-        <button class="btn tonal" data-act="browse" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Browse ${esc(d.name)}'s files">${icon("folder")}Browse</button>
+        <button class="btn tonal" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>${icon("send")}<span class="lbl">Send</span></button>
+        <button class="btn tonal" data-act="browse" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Browse ${esc(d.name)}'s files">${icon("folder")}<span class="lbl">Browse</span></button>
         <button class="iconbtn" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Get files from ${esc(d.name)}">${icon("down")}</button>
         <button class="iconbtn" data-act="devmenu" data-id="${d.id}" title="More">${icon("more")}</button></div>`;
     }).join("") + `<div class="center"><button class="btn ghost" data-act="pair">${icon("add")}Pair another phone</button></div>`;
