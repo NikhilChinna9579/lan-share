@@ -44,7 +44,7 @@ class ReceiveService : Service() {
             .setOngoing(true)
             // Copied something? One tap here sends it to the laptop (it shows a Copy box there).
             .addAction(Notification.Action.Builder(null, "Send copied text", PendingIntent.getActivity(this, 4,
-                Intent(this, AssistantActivity::class.java).putExtra(AssistantActivity.EXTRA_SEND_CLIP, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                Intent(this, ClipSendActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
                 PendingIntent.FLAG_IMMUTABLE)).build())
             // Always a way to the assistant, bubble or not.
             .addAction(Notification.Action.Builder(null, "🎤 Assistant", PendingIntent.getActivity(this, 3,
@@ -53,6 +53,10 @@ class ReceiveService : Service() {
             .build()
         readyNote = ready
         foreground(false)
+        // Android 14+ lets people swipe this away; it comes back at the next unlock (and
+        // when LAN Share or the bubble opens), so "Send copied text" is never lost for good.
+        val flags = if (Build.VERSION.SDK_INT >= 33) Context.RECEIVER_NOT_EXPORTED else 0
+        runCatching { registerReceiver(unlocked, android.content.IntentFilter(Intent.ACTION_USER_PRESENT), flags) }
         running = true
         Hub.changed() // the app's "Ready to receive" updates right away
         Bubble.current = Bubble(this).also { it.refresh() }
@@ -72,11 +76,13 @@ class ReceiveService : Service() {
         if (DeviceStore.all(this).isEmpty() && !PhonePairing.open() && !Bubble.enabled(this)) stopSelf()
         Bubble.current?.refresh() // the bubble setting or permission may have changed
         updateWake()
+        showReady("opened")
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
+        runCatching { unregisterReceiver(unlocked) }
         wake?.stop()
         wake = null
         Bubble.current?.hide()
@@ -87,6 +93,19 @@ class ReceiveService : Service() {
     }
 
     private var readyNote: Notification? = null
+
+    private val unlocked = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) = showReady("unlock")
+    }
+
+    /** Puts "Ready to receive · Send copied text" back if it was swiped away (no sound). */
+    private fun showReady(why: String) {
+        val n = readyNote ?: return
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.activeNotifications.any { it.id == ID_READY }) return
+        runCatching { nm.notify(ID_READY, n) }
+        android.util.Log.i("LanShare", "ready note: shown again ($why)")
+    }
     private var wake: WakeListener? = null
 
     /** Foreground, with the microphone type only while "Hey Jarvis" is listening. */

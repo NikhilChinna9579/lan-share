@@ -15,7 +15,7 @@ import android.util.Log
 class ClipTile : TileService() {
     override fun onStartListening() {
         qsTile?.apply {
-            state = Tile.STATE_INACTIVE
+            state = Tile.STATE_ACTIVE // highlighted: a button that's always ready (inactive looked disabled)
             label = "Send copied text"
             if (Build.VERSION.SDK_INT >= 29) subtitle = "to your laptop"
             updateTile()
@@ -25,9 +25,8 @@ class ClipTile : TileService() {
     override fun onClick() {
         Log.i("LanShare", "tile: send copied text")
         Clip.holdUntil = System.currentTimeMillis() + 3000 // the assistant sends it once, explicitly
-        val i = Intent(this, AssistantActivity::class.java)
-            .putExtra(AssistantActivity.EXTRA_SEND_CLIP, true)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val i = Intent(this, ClipSendActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (Build.VERSION.SDK_INT >= 34) {
             startActivityAndCollapse(PendingIntent.getActivity(this, 7, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         } else {

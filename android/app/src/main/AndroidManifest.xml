@@ -71,6 +71,15 @@
             android:theme="@style/Theme.LanShare.Assistant"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- "Send copied text": a small window with the devices and a Send button each. -->
+        <activity
+            android:name=".ClipSendActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=".clipsend"
+            android:theme="@style/Theme.LanShare.Popup" />
+
         <!-- Quick Settings tile: "Send copied text" to the laptop in one tap. -->
         <service
             android:name=".ClipTile"

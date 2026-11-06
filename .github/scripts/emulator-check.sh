@@ -124,8 +124,21 @@ bail_if_crashed() { if crashed; then fail "app crashed during: $1"; A logcat -d 
 A logcat -b crash -c
 mark; night no; app
 expect 30 'screen: unpaired' "first launch shows pairing"
-expect 10 'setup: shown' "first start asks for everything it can use, in one place"
-shot 00-setup
+# First start asks the usual Android way: its own dialogs one after another.
+expect 10 'setup: asking for [1-9][0-9]* permission' "first start asks with Android's own permission dialogs"
+sleep 2; shot 00-setup-permission
+until_ok 10 "tap_text 'While using the app'"
+expect 15 'setup: background' "…then “always run in the background?”"
+sleep 2; shot 00-setup-background
+until_ok 10 "tap_text Allow"
+expect 15 'setup: tile' "…then “add the Send copied text tile?”"
+sleep 2; shot 00-setup-tile
+until_ok 10 "tap_text 'Add tile'"
+expect 15 'setup: add tile' "…the tile answer comes back"
+expect 15 'setup: bubble question' "…then one question about the bubble"
+shot 00-setup-bubble
+until_ok 10 "tap_text 'Not now'"
+expect 10 'setup: done' "…and setup is done"
 expect 5 'version: [0-9.]+ · built [0-9]+ [A-Z][a-z]+ 20[0-9]{2}' "home screen shows which build this is (build time)"
 shot 01-unpaired-light
 bail_if_crashed "first launch"
@@ -226,12 +239,53 @@ until_ok 10 "A shell settings get secure sysui_qs_tiles | grep -q ClipTile" || l
 # Android delivers a tile's tap only while Quick Settings is open (as when a person taps it).
 A shell cmd statusbar expand-settings; sleep 3
 mark; A shell cmd statusbar click-tile $PKG/.ClipTile 2>&1 | head -2
-expect 15 'assistant: send copied text \(tile\)' "Quick Settings tile opens and reads what's copied"
+expect 15 'clip send: shown, [1-9][0-9]* device\(s\), 14 chars' "the tile opens a small window with what's copied and the devices"
+sleep 1; shot 06d-clip-send-window
+# In the middle of the screen (not a sheet from the bottom).
+A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1
+H=$(A shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1 | cut -dx -f2)
+MID=$(python3 - "$WORK/ui.xml" "$H" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+h = int(sys.argv[2]); ys = []
+for n in ET.parse(sys.argv[1]).iter("node"):
+    if n.get("text") in ("Send copied text", "Cancel") and n.get("package") == "com.nikhil.lanshare":
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds"))); ys += [y1, y2]
+print("yes" if ys and min(ys) > h * 0.2 and max(ys) < h * 0.8 else "no %s of %d" % (ys, h))
+PY
+)
+[ "$MID" = yes ] && pass "…in the middle of the screen" || fail "Send copied text window position ($MID)"
+until_ok 10 "tap_logged 'Send DESKTOP-NIKHIL'"
+expect 15 'clip send: to DESKTOP-NIKHIL' "Send beside the laptop sends it"
+until_ok 10 "! A shell dumpsys activity activities 2>/dev/null | grep -q 'ClipSendActivity'" && pass "…and the window closes" || fail "Send copied text window stayed open"
 until_ok 15 "get /api/state | grep -q 'Tile copy 5150'" && pass "…and the laptop shows it in its Copy box" || fail "tile copy offered on the laptop"
 api /api/clip | grep -q 'Tile copy 5150' && fail "the laptop's clipboard was replaced without Copy" || pass "…its clipboard untouched until Copy"
 A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Send copied text' \
   && pass "LAN Share's notification has a “Send copied text” button" || fail "“Send copied text” on the notification"
 A shell cmd statusbar remove-tile $PKG/.ClipTile >/dev/null 2>&1; shade_closed
+# LAN Share's notification ("Send copied text") can be swiped away on Android 14+; the next
+# unlock brings it back.
+note_up() { A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Ready to receive files'; }
+A shell cmd statusbar expand-notifications; sleep 2
+A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1
+XY=$(python3 - "$WORK/ui.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+for n in ET.parse(sys.argv[1]).iter("node"):
+    if (n.get("text") or "") == "Ready to receive files":
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds"))); print(x1 + 10, (y1 + y2) // 2); break
+PY
+)
+[ -n "$XY" ] && A shell input swipe $XY $(( ${XY% *} + 700 )) ${XY#* } 250
+sleep 2; shade_closed
+if note_up; then
+  log "note  couldn't swipe the notification away here; unlock check skipped"
+else
+  pass "LAN Share's notification can be swiped away"
+  mark; A shell input keyevent KEYCODE_SLEEP; sleep 2; A shell input keyevent KEYCODE_WAKEUP; sleep 1
+  A shell wm dismiss-keyguard; sleep 3
+  expect 15 'ready note: shown again \(unlock\)' "…and it's back after the next unlock"
+  note_up && A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Send copied text' \
+    && pass "…with its “Send copied text” button" || fail "notification back with Send copied text"
+fi
 bail_if_crashed "clipboard"
 
 # ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off
