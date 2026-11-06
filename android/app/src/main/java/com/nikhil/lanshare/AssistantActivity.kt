@@ -130,6 +130,13 @@ class AssistantActivity : Activity() {
         presence.start()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) Clip.autoSend(this, { DeviceStore.all(this).filter { presence.status(it.id).state == Presence.State.ONLINE } }) { d, t ->
+            Actions.sendClip(this, d, t, { e -> e.message ?: e.toString() })
+        }
+    }
+
     override fun onStop() {
         Bubble.hiddenForAssistant = false
         Bubble.update(this)

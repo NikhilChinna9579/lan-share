@@ -38,6 +38,7 @@ object Clip {
     /** Puts text from [from] on this phone's clipboard; a quiet notification says so. */
     fun write(ctx: Context, text: String, from: String, notify: Boolean = true) {
         val app = ctx.applicationContext
+        remember(app, text) // came from there: never sent back
         val done = CountDownLatch(1)
         main.post {
             runCatching {
@@ -107,6 +108,42 @@ object Clip {
         }
         done.await(2, TimeUnit.SECONDS)
         return result
+    }
+
+    // ------------------------------------------------------------- sent on its own
+
+    /** "Send what I copy here when LAN Share or the bubble opens" (on unless turned off). */
+    fun autoEnabled(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("clip_auto", true)
+    fun setAutoEnabled(ctx: Context, on: Boolean) =
+        ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("clip_auto", on).apply()
+
+    /** Tests: not while a test hook is putting something on the clipboard. */
+    @Volatile var holdUntil = 0L
+
+    private fun remember(ctx: Context, text: String) =
+        ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putInt("clip_last", text.hashCode()).apply()
+    private fun known(ctx: Context, text: String) =
+        ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).getInt("clip_last", 0) == text.hashCode()
+
+    /**
+     * Android lets an app read the clipboard only while it's on screen. So the moment
+     * LAN Share (or the bubble's assistant) comes up, something newly copied on this
+     * phone goes to the laptops that are online: copy → tap the bubble → paste there.
+     * Only text copied in the last 10 minutes, not marked private, and not what just
+     * came from a laptop.
+     */
+    fun autoSend(activity: Activity, targets: () -> List<Device>, send: (Device, String) -> Unit) {
+        if (!enabled(activity) || !autoEnabled(activity) || System.currentTimeMillis() < holdUntil) return
+        val cm = activity.getSystemService(ClipboardManager::class.java)
+        val clip = runCatching { cm.primaryClip }.getOrNull() ?: return
+        val age = System.currentTimeMillis() - (clip.description?.timestamp ?: 0L)
+        if (age > 10 * 60_000) return
+        val (text, _) = read(activity)
+        if (text == null || known(activity, text)) return
+        remember(activity, text)
+        val to = targets()
+        Log.i("LanShare", "clipboard auto: ${text.length} chars to ${to.joinToString { it.name }.ifEmpty { "nobody online" }}")
+        to.forEach { send(it, text) }
     }
 
     fun oneLine(text: String): String = text.replace(Regex("\\s+"), " ").trim().let { if (it.length > 80) it.take(80) + "…" else it }

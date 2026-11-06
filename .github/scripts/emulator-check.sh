@@ -195,6 +195,13 @@ A shell input keyevent KEYCODE_HOME; sleep 4
 api /api/remote/clip "{\"device\":\"$DEV\"}" | grep -q "isn't open" && pass "…and says why not when it isn't open" || fail "paste from a phone in the background"
 A shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "https://example.com/shared" -n $PKG/.MainActivity >/dev/null
 until_ok 20 "api /api/clip | grep -q 'example.com/shared'" && pass "Share → LAN Share with text puts it on the laptop's clipboard" || fail "shared text to the laptop"
+# Copied on the phone, then LAN Share opened (as by tapping the bubble): it goes across by itself.
+run_hook "copy_only:Copied on the phone 4417"; sleep 2
+mark; app 3
+expect 15 'clipboard auto: [0-9]+ chars to .*DESKTOP-NIKHIL' "copied on the phone: sent by itself when LAN Share opens"
+until_ok 15 "api /api/clip | grep -q 'Copied on the phone 4417'" && pass "…and it's ready to paste on the laptop" || fail "auto-sent copy on the laptop"
+mark; app 3; sleep 3
+seen 'clipboard auto:' && fail "the same copy was sent again" || pass "…only once, not on every open"
 bail_if_crashed "clipboard"
 
 # ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off

@@ -62,6 +62,10 @@ type app struct {
 	clipIn    *clipNote // last text a phone put on this laptop's clipboard
 	clipFull  string    // …all of it (for the window's Copy button)
 	clipOut   *clipNote // last text copied here and sent to phones
+	// The last copy, so a phone that was away (asleep, Wi-Fi off) gets it when it's back.
+	lastCopy    string
+	lastCopyAt  time.Time
+	lastCopyGot map[string]bool // phones that have it
 }
 
 // settings are this laptop's choices, kept in settings.json.
@@ -372,18 +376,31 @@ func (a *app) clipCopied(text string) {
 	if !a.clipOn() || len(text) > protocol.MaxClip {
 		return
 	}
+	a.mu.Lock()
+	a.lastCopy, a.lastCopyAt, a.lastCopyGot = text, time.Now(), map[string]bool{}
+	a.mu.Unlock()
+	var ids []string
+	for _, s := range a.tracker.Snapshot() {
+		if s.Status == presence.Online {
+			ids = append(ids, s.ID)
+		}
+	}
+	a.pushCopy(text, ids)
+}
+
+// pushCopy puts text on these phones' clipboards (in parallel) and notes who got it.
+func (a *app) pushCopy(text string, ids []string) {
 	var to []string
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	for _, s := range a.tracker.Snapshot() {
-		if s.Status != presence.Online {
-			continue
-		}
+	for _, id := range ids {
+		d, _ := a.trust.Get(id)
 		wg.Add(1)
 		go func(id, name string) {
 			defer wg.Done()
 			c, _, err := a.dial(id)
 			if err != nil {
+				log.Printf("clipboard: %s not reachable now; it gets it when it's back", name)
 				return
 			}
 			defer c.Close()
@@ -394,7 +411,12 @@ func (a *app) clipCopied(text string) {
 			mu.Lock()
 			to = append(to, name)
 			mu.Unlock()
-		}(s.ID, s.Name)
+			a.mu.Lock()
+			if a.lastCopy == text && a.lastCopyGot != nil {
+				a.lastCopyGot[id] = true
+			}
+			a.mu.Unlock()
+		}(id, d.Name)
 	}
 	wg.Wait()
 	if len(to) == 0 {
@@ -406,6 +428,18 @@ func (a *app) clipCopied(text string) {
 	a.clipOut = &clipNote{Device: strings.Join(to, ", "), Text: p, Chars: n, At: time.Now()}
 	a.mu.Unlock()
 	a.hub.changed()
+}
+
+// catchUpCopy: a phone just came back; give it the last copy if it missed it (10 min).
+func (a *app) catchUpCopy(id string) {
+	a.mu.Lock()
+	text, fresh, got := a.lastCopy, time.Since(a.lastCopyAt) < 10*time.Minute, a.lastCopyGot[id]
+	a.mu.Unlock()
+	if text == "" || !fresh || got || !a.clipOn() {
+		return
+	}
+	log.Printf("clipboard: catching up a phone that was away")
+	a.pushCopy(text, []string{id})
 }
 
 // approve is asked by the server before accepting files. With "Ask before receiving"
@@ -600,6 +634,7 @@ func (a *app) onPresence(s presence.State) {
 	switch {
 	case s.Status == presence.Online && !wasOnline:
 		a.note("online", s.Name+" is online", hostOnly(s.Addr), "")
+		go a.catchUpCopy(s.ID)
 	case s.Status == presence.Offline && wasOnline:
 		a.note("offline", s.Name+" went offline", "", "")
 	}

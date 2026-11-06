@@ -134,6 +134,13 @@ class MainActivity : Activity() {
         render()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) Clip.autoSend(this, { DeviceStore.all(this).filter { presence.status(it.id).state == Presence.State.ONLINE } }) { d, t ->
+            Actions.sendClip(this, d, t, { friendly(it, d) })
+        }
+    }
+
     override fun onStop() {
         Clip.screenHidden()
         presence.stop()
@@ -636,6 +643,14 @@ class MainActivity : Activity() {
             trail = if (clip) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
             Clip.setEnabled(this, !clip); fillSharedFolders(sheet)
         })
+        if (clip) {
+            val auto = Clip.autoEnabled(this)
+            sheet.add(Sheet.Row(R.drawable.ic_document, "Send what I copy here automatically",
+                sub = if (auto) "When LAN Share or the bubble opens (Android allows it only then)" else "Off: send it from the bubble or the Send sheet",
+                trail = if (auto) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+                Clip.setAutoEnabled(this, !auto); fillSharedFolders(sheet)
+            })
+        }
         // The floating bubble opens the assistant from any app.
         val bubbleWanted = Bubble.enabled(this)
         val bubbleBlocked = bubbleWanted && (!android.provider.Settings.canDrawOverlays(this) || Bubble.problem == Bubble.BLOCKED)
@@ -1107,6 +1122,13 @@ class MainActivity : Activity() {
             f.delete()
             Log.i(TAG, "test hook: $mode")
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
+            if (mode.startsWith("copy_only:")) { // as if copied in another app, then LAN Share left
+                Clip.holdUntil = System.currentTimeMillis() + 3000
+                getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText("test", mode.removePrefix("copy_only:")))
+                moveTaskToBack(true)
+                return@let
+            }
             if (mode.startsWith("ask:")) { // a sentence with nothing shared first
                 Hub.shared(emptyList())
                 startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", mode.removePrefix("ask:")))

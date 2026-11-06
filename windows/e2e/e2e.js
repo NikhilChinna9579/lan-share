@@ -465,6 +465,17 @@ async function step(name, fn) {
       await settle(); await page.screenshot({ path: path.join(out, "w12-offline.png") });
     });
 
+    await step("shared clipboard: a phone that was away gets the last copy when it's back", async () => {
+      await page.evaluate(() => api("/api/clip/copy", {text: "Copied while the phone slept"}));
+      await sleep(1500);
+      start("phone-back", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47821"]);
+      const lg = () => fs.readFileSync(path.join(out, "phone-back.log"), "utf8");
+      await waitFor("the missed copy on the phone", () => /clipboard from [^:]+: "Copied while the phone slept"/.test(lg()), 25_000);
+      await page.getByText(/^Online/).first().waitFor();
+      procs[procs.length - 1].kill("SIGKILL");
+      await page.getByText(/^Offline/).first().waitFor({ timeout: 25_000 });
+    });
+
     await step("forget a phone: it's gone, and can't connect any more", async () => {
       await page.locator('.dev [data-act="devmenu"]').first().click();
       await page.locator('[data-act="forget"]').click();
