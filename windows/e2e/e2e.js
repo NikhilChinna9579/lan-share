@@ -83,11 +83,6 @@ async function step(name, fn) {
     (what === "click"
       ? `$b = [U2.P]::FindWindowEx($h, [System.IntPtr]::Zero, 'Button', 'Copy'); if ($b -eq [System.IntPtr]::Zero) { 'no button' } else { [void][U2.P]::SendMessage($b, 0xF5, [System.IntPtr]::Zero, [System.IntPtr]::Zero); 'clicked' }`
       : `if ($h -ne [System.IntPtr]::Zero -and [U2.P]::IsWindowVisible($h)) { 'yes' } else { 'no' }`)], { timeout: 30_000 }).toString().trim();
-  // Windows: is the bubble window on screen?
-  let bubbleSaw = "";
-  const bubbleVisible = () => (bubbleSaw = execFileSync("powershell", ["-NoProfile", "-Command",
-    `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);'; ` +
-    `$h = [U.W]::FindWindow('LanShareBubble', [NullString]::Value); if ($h -ne [System.IntPtr]::Zero -and [U.W]::IsWindowVisible($h)) { 'yes' } else { 'no ' + $h }`], { timeout: 30_000 }).toString().trim()) === "yes";
   const phoneData = path.join(work, "phone");
   const pairFile = path.join(work, "pair.json");
   const phoneInbox = path.join(phoneData, "inbox", "Download");
@@ -299,52 +294,6 @@ async function step(name, fn) {
       await page.locator(".tr", { hasText: `Opened ${name}` }).first().locator('[data-act="savecopy"]').click();
       const saved = path.join(laptopDownloads, name);
       await waitFor("saved copy in Downloads", () => fs.existsSync(saved) && fs.statSync(saved).size === 460_000);
-    });
-
-    await step("assistant: typed “send Trip notes.txt to my phone” sends it (after 2 s)", async () => {
-      fs.writeFileSync(path.join(laptopDownloads, "Trip notes.txt"), crypto.randomBytes(12_000));
-      await page.locator("#askBtn").click();
-      await page.locator("#asay").fill("send trip notes dot txt to my phone");
-      await page.locator("#asay").press("Enter");
-      const card = page.locator(".card.assist");
-      await card.getByText("Sending Trip notes.txt to Nikhil's phone").first().waitFor();
-      await settle(); await page.screenshot({ path: path.join(out, "w08j-assistant.png") });
-      const dest = path.join(phoneInbox, "Trip notes.txt");
-      await waitFor("the file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 12_000, 15_000);
-    });
-
-    await step("assistant: Cancel within 2 s stops it", async () => {
-      fs.writeFileSync(path.join(laptopDownloads, "Not this.txt"), "x".repeat(500));
-      await page.evaluate(() => api("/api/assistant/say", {text: "send not this.txt to my phone"}));
-      await page.locator('.card.assist [data-act="acancel"]').click();
-      await sleep(3000);
-      if (fs.existsSync(path.join(phoneInbox, "Not this.txt"))) throw new Error("sent despite Cancel");
-    });
-
-    await step("assistant: “get the latest photo from my phone”", async () => {
-      const pics = path.join(phoneData, "inbox", "Pictures");
-      fs.mkdirSync(pics, { recursive: true });
-      fs.writeFileSync(path.join(pics, "IMG_old.jpg"), crypto.randomBytes(5_000));
-      await sleep(30);
-      fs.writeFileSync(path.join(pics, "IMG_newest.jpg"), crypto.randomBytes(7_000));
-      fs.rmSync(path.join(laptopDownloads, "IMG_newest.jpg"), { force: true });
-      await page.locator("#askBtn").click();
-      await page.locator("#asay").fill("get the latest photo from my phone");
-      await page.locator('[data-act="asay"]').click();
-      await page.locator(".card.assist").getByText("Getting IMG_newest.jpg from Nikhil's phone").first().waitFor({ timeout: 10_000 });
-      const got = path.join(laptopDownloads, "IMG_newest.jpg");
-      await waitFor("the newest photo on the laptop", () => fs.existsSync(got) && fs.statSync(got).size === 7_000, 15_000);
-    });
-
-    await step("assistant: “send this” says to name the file", async () => {
-      await page.evaluate(() => api("/api/assistant/say", {text: "send this to my phone"}));
-      await page.locator(".card.assist").getByText("type the file's name", { exact: false }).waitFor();
-    });
-
-    await step("assistant: nonsense gets a helpful answer", async () => {
-      await page.evaluate(() => api("/api/assistant/say", {text: "what's the weather"}));
-      await page.locator(".card.assist").getByText("I didn't understand that").waitFor();
-      await page.locator('.card.assist [data-act="adismiss"]').click();
     });
 
     await step("search the phone's folders and get a file from a subfolder", async () => {
@@ -581,20 +530,6 @@ async function step(name, fn) {
     await step("second launch hands over instead of starting twice", async () => {
       execFileSync(lanshare, ["-data", laptopData, "-no-window"], { env: { ...process.env, HOME: home }, timeout: 5_000 });
       if (procs[0].exitCode !== null) throw new Error("first copy died");
-    });
-
-    if (win) await step("Windows: the floating bubble is on screen, and hides from Settings", async () => {
-      await waitFor("the bubble", () => bubbleVisible(), 15_000).catch((e) => { throw new Error(e.message + " (saw: " + bubbleSaw + ")"); });
-      try {
-        execFileSync("powershell", ["-NoProfile", "-Command",
-          `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; ` +
-          `$i = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($i); ` +
-          `$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $i.Save('${path.join(out, "w20-desktop-bubble.png")}')`], { timeout: 30_000 });
-      } catch {}
-      await page.evaluate(() => api("/api/settings", {bubble: false}));
-      await waitFor("the bubble hidden", () => !bubbleVisible(), 10_000);
-      await page.evaluate(() => api("/api/settings", {bubble: true}));
-      await waitFor("the bubble back", () => bubbleVisible(), 10_000);
     });
 
     await step("Quit stops the app", async () => {

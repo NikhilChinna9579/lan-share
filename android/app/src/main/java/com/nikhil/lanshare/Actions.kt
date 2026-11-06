@@ -9,7 +9,7 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 /**
- * Sending and getting files, shared by the home screen and the assistant. Progress and
+ * Sending and getting files, shared by the home screen and the other screens. Progress and
  * results go to [Hub], so whichever screen is open shows them live.
  */
 object Actions {
@@ -187,47 +187,5 @@ object Actions {
             }.onFailure { Log.i(TAG, "paste from ${d.name} failed: $it") }
             done(r.exceptionOrNull()?.let { if (it is IllegalStateException) it.message else explain(it) })
         }
-    }
-
-    // ------------------------------------------------------------- finding "this file"
-
-    /** The newest photo, screenshot, video or download on this phone; null if none (or no permission). */
-    fun latest(ctx: Context, what: Commands.What): Uri? = latestWithDate(ctx, what)?.first
-
-    /** The newest photo/screenshot/…, and when it was added (ms). */
-    fun latestWithDate(ctx: Context, what: Commands.What): Pair<Uri, Long>? {
-        val vol = MediaStore.VOLUME_EXTERNAL
-        val (collection, sel) = when (what) {
-            Commands.What.PHOTO -> MediaStore.Images.Media.getContentUri(vol) to "${MediaStore.MediaColumns.RELATIVE_PATH} NOT LIKE '%Screenshots%'"
-            Commands.What.SCREENSHOT -> MediaStore.Images.Media.getContentUri(vol) to "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE '%Screenshots%'"
-            Commands.What.VIDEO -> MediaStore.Video.Media.getContentUri(vol) to null
-            Commands.What.DOWNLOAD -> MediaStore.Downloads.getContentUri(vol) to null
-            else -> return null
-        }
-        return runCatching {
-            ctx.contentResolver.query(collection, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED), sel, null,
-                "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
-                if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) to c.getLong(1) * 1000 else null
-            }
-        }.getOrNull()
-    }
-
-    /** The phone's file best matching a spoken name ("report", "IMG 2041"); null if nothing fits. */
-    fun findOnPhone(ctx: Context, said: String): Uri? {
-        val base = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        val word = Commands.normalize(said).substringBeforeLast('.').split(' ', '_', '-').maxByOrNull { it.length } ?: return null
-        var best: Uri? = null
-        var bestScore = 0
-        runCatching {
-            ctx.contentResolver.query(base, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME),
-                "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?", arrayOf("%$word%"), "${MediaStore.MediaColumns.DATE_MODIFIED} DESC")?.use { c ->
-                var n = 0
-                while (c.moveToNext() && n++ < 500) {
-                    val score = Commands.nameScore(c.getString(1) ?: continue, said)
-                    if (score > bestScore) { bestScore = score; best = ContentUris.withAppendedId(base, c.getLong(0)) }
-                }
-            }
-        }
-        return best
     }
 }

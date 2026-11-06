@@ -59,10 +59,9 @@ type app struct {
 	quitOnce  sync.Once
 	settings  settings
 	approvals []*approval
-	clipIn    *clipNote    // last text a phone put on this laptop's clipboard
-	clipFull  string       // …all of it (for the window's Copy button)
-	clipOut   *clipNote    // last text copied here and sent to phones
-	assist    *assistState // the assistant card (voice or typed)
+	clipIn    *clipNote // last text a phone put on this laptop's clipboard
+	clipFull  string    // …all of it (for the window's Copy button)
+	clipOut   *clipNote // last text copied here and sent to phones
 	// The last copy, so a phone that was away (asleep, Wi-Fi off) gets it when it's back.
 	lastCopy    string
 	lastCopyAt  time.Time
@@ -78,10 +77,6 @@ type settings struct {
 	// ClipNow: text copied on a phone goes straight onto this clipboard. Off (the
 	// default): a notification and the window offer it with Copy.
 	ClipNow bool `json:"clipNow,omitempty"`
-	// NoBubble hides the floating bubble (Windows); BubbleX/Y is where it was left.
-	NoBubble bool `json:"noBubble,omitempty"`
-	BubbleX  *int `json:"bubbleX,omitempty"`
-	BubbleY  *int `json:"bubbleY,omitempty"`
 }
 
 // clipNote is the last clipboard text that came from, or went to, a phone.
@@ -1046,10 +1041,9 @@ func (a *app) stateJSON() []byte {
 			"installed": isInstalled(), "canInstall": installSupported() && !isInstalled(),
 			"ask": a.settings.Ask, "browse": !a.settings.NoBrowse, "keyProtected": identity.Protected(),
 			"clip": !a.settings.NoClip, "clipNow": a.settings.ClipNow,
-			"bubble": !a.settings.NoBubble, "bubbleSupported": bubbleSupported, "clipPopup": clipPopupSupported,
+			"clipPopup": clipPopupSupported,
 		},
 		"clipIn":    a.clipIn,
-		"assistant": a.assist,
 		"clipOut":   a.clipOut,
 		"approvals": orEmpty(a.approvals),
 		"devices":   orEmpty(devs),
@@ -1204,4 +1198,27 @@ func (a *app) clearHistory() {
 	os.WriteFile(filepath.Join(a.dataDir, "history.json"), []byte("[]"), 0o600)
 	logf("history: cleared")
 	a.hub.changed()
+}
+
+// pasteFromPhone puts the phone's clipboard on this laptop's ("Paste from this phone").
+func (a *app) pasteFromPhone(id string) (int, error) {
+	c, d, err := a.dial(id)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	text, err := c.RequestClip()
+	if err != nil {
+		return 0, err
+	}
+	if err := clipboard.Write(text); err != nil {
+		return 0, err
+	}
+	p, n := preview(text)
+	a.mu.Lock()
+	a.clipIn = &clipNote{Device: d.Name, Text: p, Chars: n, At: time.Now()}
+	a.clipFull = text
+	a.mu.Unlock()
+	a.hub.changed()
+	return n, nil
 }

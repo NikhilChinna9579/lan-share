@@ -125,9 +125,8 @@ A logcat -b crash -c
 mark; night no; app
 expect 30 'screen: unpaired' "first launch shows pairing"
 # First start asks the usual Android way: its own dialogs one after another.
-expect 10 'setup: asking for [1-9][0-9]* permission' "first start asks with Android's own permission dialogs"
-sleep 2; shot 00-setup-permission
-until_ok 10 "tap_text 'While using the app'"
+# (Notifications and media were granted above, so it goes straight to the next question.)
+expect 10 'setup: asking for 0 permission' "first start asks with Android's own dialogs (only what isn't allowed yet)"
 expect 15 'setup: background' "…then “always run in the background?”"
 sleep 2; shot 00-setup-background
 until_ok 10 "tap_text Allow"
@@ -135,24 +134,12 @@ expect 15 'setup: tile' "…then “add the Send copied text tile?”"
 sleep 2; shot 00-setup-tile
 until_ok 10 "tap_text 'Add tile'"
 expect 15 'setup: add tile' "…the tile answer comes back"
-expect 15 'setup: bubble question' "…then one question about the bubble"
-shot 00-setup-bubble
-until_ok 10 "tap_text 'Not now'"
 expect 10 'setup: done' "…and setup is done"
 expect 5 'version: [0-9.]+ · built [0-9]+ [A-Z][a-z]+ 20[0-9]{2}' "home screen shows which build this is (build time)"
 shot 01-unpaired-light
 bail_if_crashed "first launch"
 night yes; mark; app; shot 01-unpaired-dark; night no
 seen 'setup: shown' && fail "the setup screen came back on the next start" || pass "…only on the first start"
-# The bubble before pairing: allowing "Display over other apps" alone brings it up (it
-# used to need a paired laptop, because it lives in the receiving service).
-mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW allow; app 3
-expect 20 'bubble shown' "bubble appears before pairing, once the permission is allowed"
-shot 01b-bubble-unpaired
-# Taken away while LAN Share runs, then back to LAN Share (as when returning from Settings).
-mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW deny; A shell am start -n $PKG/.MainActivity >/dev/null
-expect 15 'bubble hidden' "…and goes when the permission is taken away"
-
 # ---------------------------------------------------------------- 2. laptop program + pairing
 ./bin/lanshare -data "$LAPTOP_DATA" -port 47900 -name DESKTOP-NIKHIL -no-window -pairing-file "$WORK/pair.json" > "$OUT/laptop-stdout.log" 2>&1 &
 LAPTOP_PID=$!
@@ -222,7 +209,7 @@ A shell input keyevent KEYCODE_HOME; sleep 4
 api /api/remote/clip "{\"device\":\"$DEV\"}" | grep -q "isn't open" && pass "…and says why not when it isn't open" || fail "paste from a phone in the background"
 A shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "https://example.com/shared" -n $PKG/.MainActivity >/dev/null
 until_ok 20 "api /api/clip | grep -q 'example.com/shared'" && pass "Share → LAN Share with text puts it on the laptop's clipboard" || fail "shared text to the laptop"
-# Copied on the phone, then LAN Share opened (as by tapping the bubble): it goes across by itself.
+# Copied on the phone, then LAN Share opened: it goes across by itself.
 run_hook "copy_only:Copied on the phone 4417"; sleep 2
 mark; app 3
 expect 15 'clipboard auto: [0-9]+ chars to .*DESKTOP-NIKHIL' "copied on the phone: sent by itself when LAN Share opens"
@@ -364,82 +351,16 @@ bail_if_crashed "cancel/retry"
 mark; app 6
 expect 15 'history: loaded [1-9][0-9]* items' "history survives an app restart"
 
-# ---------------------------------------------------------------- 7. the assistant
-# a) Everything said at once: "send this to my laptop in downloads".
-mark; hook demo.txt assistant; app 3
-expect 15 'assistant: plan send Voice note.m4a to DESKTOP-NIKHIL in Downloads' "assistant understood the command"
-shot 14-assistant-confirm
-until_ok 30 "[ \"\$(stat -c %s '$HOME/Downloads/Voice note.m4a' 2>/dev/null)\" = 524288 ]" \
-  && pass "assistant sent the file (after the 2 s pause)" || fail "assistant sent the file"
-expect 10 'assistant: Sent Voice note.m4a' "assistant shows it was sent"
-bail_if_crashed "assistant send"
-# b) A follow-up question, answered by typing: "send this to my laptop" → "Which folder?" → "documents".
-mark; hook demo.txt assistant_ask; app 3
-expect 20 'assistant: asking: Which folder on DESKTOP-NIKHIL' "assistant asks which folder"
-shot 15-assistant-asks
-until_ok 10 "tap_text Documents"   # the folder choices it offers (typing here depends on the emulator's keyboard)
-expect 15 'assistant: plan send Voice memo 2.m4a to DESKTOP-NIKHIL in Documents' "assistant took the answer"
-until_ok 30 "[ \"\$(stat -c %s '$HOME/Documents/Voice memo 2.m4a' 2>/dev/null)\" = 300000 ]" \
-  && pass "follow-up send arrived in Documents" || fail "follow-up send arrived in Documents"
-# "send this" with nothing shared: Android can't tell us what Photos has open, so it
-# offers the newest photo/screenshot, with a preview, and asks.
-mark; hook demo.txt "ask:send this to my laptop"; app 3
-expect 20 'assistant: send this: ' "“send this” with nothing shared looks for the latest photo/screenshot"
-expect 10 'assistant: asking: (Is it this one\?|Which file\?)' "…and asks before sending anything"
-shot 15b-send-this
-# c) Getting a file by name: "get meeting notes from my laptop".
-head -c 400000 /dev/urandom > "$HOME/Documents/Meeting notes.txt"
-mark; hook demo.txt assistant_get; app 3
-expect 25 'assistant: plan get Meeting notes.txt from DESKTOP-NIKHIL' "assistant found the file on the laptop"
-until_ok 30 "[ \"\$(phone_size '/sdcard/Download/Meeting notes.txt')\" = 400000 ]" \
-  && pass "phone got the file from the laptop, intact size" || fail "phone got the file from the laptop"
-shot 16-assistant-got
-bail_if_crashed "assistant"
-
-# ---------------------------------------------------------------- 8. floating bubble
-A shell appops set $PKG SYSTEM_ALERT_WINDOW allow
-mark; hook demo.txt bubble; app 3
-A shell input keyevent KEYCODE_HOME   # the bubble is for other apps: it hides on LAN Share's own screen
-expect 15 'bubble shown' "bubble appears over other apps"
-sleep 1; shot 17-bubble-on-home
-until_ok 10 "applog | tail -n +$((MARK + 1)) | grep -qE 'ui: bubble at '"
-BXY=$(applog | tail -n +$((MARK + 1)) | grep -oE 'ui: bubble at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
-mark; A shell input tap "${BXY%,*}" "${BXY#*,}"
-expect 10 'bubble tapped' "tapping the bubble"
-expect 10 'assistant: ready' "bubble opens the assistant"
-shot 18-assistant-from-bubble
-A shell input keyevent KEYCODE_BACK
-# Drag the bubble into the bottom corner: it must stay above the navigation bar.
-SH=$(A shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1 | cut -dx -f2)
-sleep 2; mark; A shell input swipe "${BXY%,*}" "${BXY#*,}" 20 $((SH - 5)) 900
-expect 10 'bubble moved to ' "dragging the bubble"
-L=$(applog | tail -n +$((MARK + 1)) | grep -oE 'bubble moved to [0-9]+,[0-9]+ \(allowed y [0-9]+\.\.[0-9]+\)' | tail -1)
-Y=$(echo "$L" | sed -E 's/.*,([0-9]+) \(.*/\1/'); MAXY=$(echo "$L" | sed -E 's/.*\.\.([0-9]+)\)/\1/')
-sleep 1
-# Where it really is on screen: its bottom must be above the navigation bar (≥ 40 px from the bottom).
-P=$(applog | tail -n +$((MARK + 1)) | grep -oE 'ui: bubble at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
-[ -n "$Y" ] && [ "$Y" -le "$MAXY" ] && [ -n "$P" ] && [ "${P#*,}" -lt $((SH - 120)) ] \
-  && pass "…it stays clear of the navigation bar (centre at $P, screen $SH high)" || fail "bubble went under the navigation bar ($L; centre $P; screen $SH)"
-# Drag it onto the ✕ at the bottom: hidden; opening LAN Share brings it back.
-T=$(applog | grep -oE 'ui: bubble target at [0-9]+,[0-9]+' | tail -1 | grep -oE '[0-9]+,[0-9]+$')
-mark; A shell input swipe "${P%,*}" "${P#*,}" "${T%,*}" "${T#*,}" 1200
-expect 10 'bubble dismissed' "dragging the bubble onto the ✕ puts it away"
-mark; app 3
-expect 15 'bubble back \(LAN Share opened\)' "opening LAN Share brings it back"
-expect 10 'bubble shown' "…and it's on screen again"
-bail_if_crashed "bubble"
-
 # ---------------------------------------------------------------- 8b. phone <-> phone
 # This phone pairs with another "phone" (the simulator, which shows a code), then sends it
-# a file through the assistant.
+# a file.
 ./bin/fakephone -data "$WORK/phone2" -name "Test phone" -port 47840 -allow-pair "$WORK/p2.json" > "$OUT/phone2.log" 2>&1 &
 P2=$!
 until_ok 10 "[ -f '$WORK/p2.json' ]"
 P2ID=$(python3 -c "import json;print(json.load(open('$WORK/p2.json'))['id'])"); P2CODE=$(python3 -c "import json;print(json.load(open('$WORK/p2.json'))['code'])")
 mark; hook demo.txt "pair_phone:10.0.2.2:47840:$P2ID:$P2CODE"; app 3
 expect 20 'pair phone: ok with Test phone' "paired with another phone using its code"
-mark; hook demo.txt "say:send this to test phone in downloads"; app 3
-expect 20 'assistant: plan send Shared note.txt to Test phone in Downloads' "assistant sends to the other phone"
+mark; hook demo.txt send_to_phone; app 3
 until_ok 30 "[ \"\$(stat -c %s '$WORK/phone2/inbox/Download/Shared note.txt' 2>/dev/null)\" = 200000 ]" \
   && pass "file arrived on the other phone" || fail "file arrived on the other phone"
 # Direct Share: paired devices are one-tap targets in every app's Share menu. With two
@@ -469,25 +390,6 @@ else
   fail "phone shows a pairing code"
 fi
 bail_if_crashed "phone to phone"
-
-# ---------------------------------------------------------------- 8c. "Hey Jarvis" wake word
-# The real models and TensorFlow Lite on the phone, fed recordings (the emulator has no
-# microphone): "hey jarvis" must score high, similar-sounding phrases low.
-A shell "run-as $PKG mkdir -p files/wav"
-for f in .github/testdata/*.wav; do
-  b=$(basename "$f"); A push "$f" "/data/local/tmp/$b" >/dev/null; A shell chmod 644 "/data/local/tmp/$b"
-  A shell "run-as $PKG cp /data/local/tmp/$b files/wav/$b"
-done
-mark; hook demo.txt wake_files; app 3
-expect 60 'wake test: jarvis_a.wav score (0\.[5-9]|1\.)' "“Hey Jarvis” is recognised"
-expect 10 'wake test: neg_travis.wav score 0\.[0-4]' "no false alarm on “hey travis”"
-expect 10 'wake test: neg_send.wav score 0\.[0-4]' "no false alarm on ordinary speech"
-A shell pm grant $PKG android.permission.RECORD_AUDIO 2>/dev/null
-mark; hook demo.txt wake_on; app 4
-expect 30 'wake word: (listening|microphone unavailable)' "listening for “Hey Jarvis” starts in the background"
-mark; hook demo.txt wake_off; app 3
-expect 15 'wake word: off' "turning it off stops listening"
-bail_if_crashed "wake word"
 
 # ---------------------------------------------------------------- 8c2. Browse button on the main screen
 mark; app 3
@@ -556,7 +458,6 @@ hook demo.txt receiving; app 4; shot 10-receiving
 hook demo.txt sheet;     app 4; shot 11-subfolder-sheet
 mark; hook demo.txt folders; app 4; shot 12-shared-folders
 expect 10 'row: Stay reachable' "settings offer 'stay reachable'"
-expect 5 'row: Floating assistant bubble' "settings offer the bubble"
 night yes; hook demo.txt folders; app 4; shot 12-shared-folders-dark; night no
 
 # ---------------------------------------------------------------- 10. firewall-like one-way problem

@@ -10,7 +10,7 @@ import android.util.Log
 /**
  * Quick Settings tile "Send copied text": copy in any app, pull down the shade, tap.
  * Android lets only the app on screen read the clipboard, so the tap opens LAN Share's
- * assistant for a moment, which reads it and sends it to your laptop (then closes).
+ * small Send copied text window, which reads it and sends it where you choose.
  */
 class ClipTile : TileService() {
     override fun onStartListening() {
@@ -24,7 +24,7 @@ class ClipTile : TileService() {
 
     override fun onClick() {
         Log.i("LanShare", "tile: send copied text")
-        Clip.holdUntil = System.currentTimeMillis() + 3000 // the assistant sends it once, explicitly
+        Clip.holdUntil = System.currentTimeMillis() + 3000 // sent once, from the window
         val i = Intent(this, ClipSendActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (Build.VERSION.SDK_INT >= 34) {

@@ -46,20 +46,15 @@ class ReceiveService : Service() {
             .addAction(Notification.Action.Builder(null, "Send copied text", PendingIntent.getActivity(this, 4,
                 Intent(this, ClipSendActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
                 PendingIntent.FLAG_IMMUTABLE)).build())
-            // Always a way to the assistant, bubble or not.
-            .addAction(Notification.Action.Builder(null, "🎤 Assistant", PendingIntent.getActivity(this, 3,
-                Intent(this, AssistantActivity::class.java).putExtra("listen", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_IMMUTABLE)).build())
             .build()
         readyNote = ready
-        foreground(false)
+        foreground()
         // Android 14+ lets people swipe this away; it comes back at the next unlock (and
-        // when LAN Share or the bubble opens), so "Send copied text" is never lost for good.
+        // when LAN Share opens), so "Send copied text" is never lost for good.
         val flags = if (Build.VERSION.SDK_INT >= 33) Context.RECEIVER_NOT_EXPORTED else 0
         runCatching { registerReceiver(unlocked, android.content.IntentFilter(Intent.ACTION_USER_PRESENT), flags) }
         running = true
         Hub.changed() // the app's "Ready to receive" updates right away
-        Bubble.current = Bubble(this).also { it.refresh() }
 
         val name = deviceName(this)
         runCatching {
@@ -73,9 +68,7 @@ class ReceiveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (DeviceStore.all(this).isEmpty() && !PhonePairing.open() && !Bubble.enabled(this)) stopSelf()
-        Bubble.current?.refresh() // the bubble setting or permission may have changed
-        updateWake()
+        if (DeviceStore.all(this).isEmpty() && !PhonePairing.open()) stopSelf()
         showReady("opened")
         return START_STICKY
     }
@@ -83,10 +76,6 @@ class ReceiveService : Service() {
     override fun onDestroy() {
         running = false
         runCatching { unregisterReceiver(unlocked) }
-        wake?.stop()
-        wake = null
-        Bubble.current?.hide()
-        Bubble.current = null
         registration?.let { runCatching { getSystemService(NsdManager::class.java).unregisterService(it) } }
         server?.stop()
         super.onDestroy()
@@ -106,49 +95,13 @@ class ReceiveService : Service() {
         runCatching { nm.notify(ID_READY, n) }
         android.util.Log.i("LanShare", "ready note: shown again ($why)")
     }
-    private var wake: WakeListener? = null
-
-    /** Foreground, with the microphone type only while "Hey Jarvis" is listening. */
-    private fun foreground(mic: Boolean): Boolean {
+    /** Foreground: Android keeps a receiving app running only with its notification showing. */
+    private fun foreground(): Boolean {
         val n = readyNote ?: return false
         return runCatching {
-            when {
-                Build.VERSION.SDK_INT >= 34 -> startForeground(ID_READY, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
-                    (if (mic) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0))
-                mic -> startForeground(ID_READY, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-                else -> startForeground(ID_READY, n)
-            }
-        }.onFailure { android.util.Log.w("LanShare", "foreground (mic=$mic): $it") }.isSuccess
-    }
-
-    /** Starts or stops listening for "Hey Jarvis" to match the setting. */
-    private fun updateWake() {
-        if (WakeWord.canListen(this)) {
-            if (wake != null) { wake?.paused = AssistantActivity.open; return }
-            // Android allows the microphone in the background only if we start it while the app is open.
-            if (!foreground(true)) return
-            wake = WakeListener(this) { openAssistant() }.also { it.start() }
-        } else if (wake != null) {
-            wake?.stop()
-            wake = null
-            foreground(false)
-            android.util.Log.i("LanShare", "wake word: off")
-        }
-    }
-
-    private fun openAssistant() {
-        val i = Intent(this, AssistantActivity::class.java).putExtra("listen", true)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        runCatching { startActivity(i) }.onFailure {
-            // Without "Display over other apps" Android may not let us open a screen from the
-            // background: offer it as a notification instead.
-            val pi = PendingIntent.getActivity(this, 7, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            val n = Notification.Builder(this, CH_RECEIVED).setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle("Yes? Tap to talk to LAN Share").setContentIntent(pi).setAutoCancel(true)
-                .setTimeoutAfter(15_000).build()
-            runCatching { getSystemService(NotificationManager::class.java).notify(9, n) }
-            wake?.paused = false
-        }
+            if (Build.VERSION.SDK_INT >= 34) startForeground(ID_READY, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(ID_READY, n)
+        }.onFailure { android.util.Log.w("LanShare", "foreground: $it") }.isSuccess
     }
 
     /** Tells laptops on the Wi-Fi where to find this phone (PROTOCOL.md §2). */
@@ -185,13 +138,13 @@ class ReceiveService : Service() {
             private set
 
         fun start(ctx: Context) {
-            if (DeviceStore.all(ctx).isEmpty() && !PhonePairing.open() && !Bubble.enabled(ctx)) return
+            if (DeviceStore.all(ctx).isEmpty() && !PhonePairing.open()) return
             runCatching { ctx.startForegroundService(Intent(ctx, ReceiveService::class.java)) }
         }
 
         fun stop(ctx: Context) = ctx.stopService(Intent(ctx, ReceiveService::class.java))
 
-        /** Re-reads settings (bubble, "Hey Jarvis"). */
+        /** Re-reads settings, and puts the notification back if it was swiped away. */
         fun refresh(ctx: Context) = start(ctx)
 
         /** Starts over, e.g. to announce a new name on the Wi-Fi. */

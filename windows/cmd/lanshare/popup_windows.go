@@ -13,6 +13,19 @@ import (
 const clipPopupSupported = true
 
 const (
+	wsPopup          = 0x80000000
+	wsExTopmost      = 0x00000008
+	wsExToolWindow   = 0x00000080
+	wsExNoActivate   = 0x08000000
+	wmMouseActivate  = 0x0021
+	maNoActivate     = 3
+	swpNoSize        = 0x0001
+	swpNoActivate    = 0x0010
+	swShowNoActivate = 4
+	swHide           = 0
+)
+
+const (
 	wmClipPopup   = wmApp + 12 // tray thread: show the box with the latest offered text
 	wmCtlColorSt  = 0x0138     // WM_CTLCOLORSTATIC
 	wmTimer       = 0x0113
@@ -31,13 +44,20 @@ const (
 )
 
 var (
-	pSetWindowText = user32.NewProc("SetWindowTextW")
-	pSetTimer      = user32.NewProc("SetTimer")
-	pKillTimer     = user32.NewProc("KillTimer")
-	pSendMessage   = user32.NewProc("SendMessageW")
-	pCreateFont    = gdi32.NewProc("CreateFontW")
-	pGetSysColorBr = user32.NewProc("GetSysColorBrush")
-	pSetBkMode     = gdi32.NewProc("SetBkMode")
+	gdi32 = syscall.NewLazyDLL("gdi32.dll")
+
+	pSetWindowPos          = user32.NewProc("SetWindowPos")
+	pShowWindow            = user32.NewProc("ShowWindow")
+	pSystemParametersInfo  = user32.NewProc("SystemParametersInfoW")
+	pGetDpiForSystem       = user32.NewProc("GetDpiForSystem")
+	pSetThreadDpiAwareness = user32.NewProc("SetThreadDpiAwarenessContext")
+	pSetWindowText         = user32.NewProc("SetWindowTextW")
+	pSetTimer              = user32.NewProc("SetTimer")
+	pKillTimer             = user32.NewProc("KillTimer")
+	pSendMessage           = user32.NewProc("SendMessageW")
+	pCreateFont            = gdi32.NewProc("CreateFontW")
+	pGetSysColorBr         = user32.NewProc("GetSysColorBrush")
+	pSetBkMode             = gdi32.NewProc("SetBkMode")
 )
 
 type clipPopupWin struct {
