@@ -68,7 +68,7 @@ class ReceiveService : Service() {
         if (DeviceStore.all(this).isEmpty() && !PhonePairing.open() && !Bubble.enabled(this)) stopSelf()
         Bubble.current?.refresh() // the bubble setting or permission may have changed
         updateWake()
-        if (ClipWatcher.wanted(this)) ClipWatcher.start(this) else ClipWatcher.stop(this)
+        if (!ClipWatcher.wanted(this)) ClipWatcher.stop(this) // started from a screen: Android asks then
         return START_STICKY
     }
 

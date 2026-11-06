@@ -184,7 +184,8 @@ mark; api /api/clip/copy '{"text":"Meeting at 5pm ✓"}' >/dev/null
 expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars, offered' "copied on the laptop: a notification with a Copy button (the default)"
 shade_open() { A shell cmd statusbar expand-notifications; sleep 2; }
 shade_open; shot 06b-clip-notification
-until_ok 10 "tap_text Copy" ; sleep 1; shade_closed
+# Tapping the notification (or its Copy button) copies it.
+until_ok 10 "tap_text 'Copied on DESKTOP-NIKHIL'"; sleep 1; shade_closed
 expect 10 'clipboard: copied what came from DESKTOP-NIKHIL' "…Copy puts it on the phone's clipboard"
 run_hook ask_clip_off
 mark; api /api/clip/copy '{"text":"Straight in 9921"}' >/dev/null
@@ -213,19 +214,6 @@ api /api/clip/again >/dev/null
 api /api/clip | grep -q 'Copied on the phone 4417' && pass "…Copy on the laptop puts it there" || fail "laptop Copy of the offered text"
 mark; app 3; sleep 3
 seen 'clipboard auto:' && fail "the same copy was sent again" || pass "…only once, not on every open"
-# The no-tap mode: the one-time permission from a computer, as a person would grant it.
-A shell pm grant $PKG android.permission.READ_LOGS
-A shell appops set $PKG SYSTEM_ALERT_WINDOW allow
-mark; app 4
-until_ok 5 "tap_text Allow" >/dev/null 2>&1   # Android 13+: "Allow LAN Share to access all device logs?"
-expect 20 'clipboard watcher: on' "with the permission: watching for copies in other apps"
-api /api/settings '{"clipNow":true}' >/dev/null   # the laptop's "paste right away" setting
-run_hook "bg_copy:Copied in another app 7781"
-expect 25 'clipboard watcher: copy seen' "a copy in another app is noticed, LAN Share in the background"
-until_ok 20 "api /api/clip | grep -q 'Copied in another app 7781'" && pass "…and it's on the laptop's clipboard with no tap" || fail "no-tap copy reached the laptop"
-api /api/settings '{"clipNow":false}' >/dev/null
-shot 06c-after-watch
-A shell appops set $PKG SYSTEM_ALERT_WINDOW deny
 bail_if_crashed "clipboard"
 
 # ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off
@@ -510,6 +498,26 @@ if timeout 30 adb root >/dev/null 2>&1; then
 else
   log "skip  restart check (no adb root here)"
 fi
+
+# ---------------------------------------------------------------- 11a. no-tap copying on the phone (advanced)
+# The no-tap mode: the one-time permission from a computer, as a person would grant it.
+A shell pm grant $PKG android.permission.READ_LOGS
+A shell appops set $PKG SYSTEM_ALERT_WINDOW allow
+api /api/settings '{"clipNow":true}' >/dev/null   # the laptop's "paste right away" setting
+# One launch: LAN Share goes to the background after 6 s, and something is copied "in
+# another app" at 12 s.
+mark; hook demo.txt "bg_copy:Copied in another app 7781"; app 2
+# Android 13+ asks each time the watcher starts: "Allow LAN Share to access all device logs?"
+sleep 1; shot 06c-log-access
+until_ok 8 "tap_text 'Allow one-time access'" && log "note  answered the log-access question"
+expect 15 'clipboard watcher: on' "with the permission: watching for copies in other apps"
+expect 30 'clipboard watcher: copy seen' "a copy in another app is noticed, LAN Share in the background"
+until_ok 20 "api /api/clip | grep -q 'Copied in another app 7781'" && pass "…and it's on the laptop's clipboard with no tap" || fail "no-tap copy reached the laptop"
+api /api/settings '{"clipNow":false}' >/dev/null
+shot 06c-after-watch
+A shell appops set $PKG SYSTEM_ALERT_WINDOW deny
+A shell pm revoke $PKG android.permission.READ_LOGS 2>/dev/null   # (and the question stops coming up)
+bail_if_crashed "clipboard watcher"
 
 # ---------------------------------------------------------------- 11b. the signed release build starts
 REL=android/app/build/outputs/apk/release/app-release.apk

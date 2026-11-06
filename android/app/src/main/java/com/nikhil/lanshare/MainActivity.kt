@@ -1155,11 +1155,10 @@ class MainActivity : Activity() {
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
             if (mode == "ask_clip_off" || mode == "ask_clip_on") { Clip.setAskFirst(this, mode.endsWith("on")); return@let }
             if (mode.startsWith("bg_copy:")) { // copied "in another app" a few seconds after LAN Share leaves
-                Clip.holdUntil = System.currentTimeMillis() + 2500
                 val text = mode.removePrefix("bg_copy:")
                 val cm = getSystemService(android.content.ClipboardManager::class.java)
-                main.postDelayed({ cm.setPrimaryClip(android.content.ClipData.newPlainText("test", text)) }, 3500)
-                moveTaskToBack(true)
+                main.postDelayed({ moveTaskToBack(true) }, 6000) // time to answer Android's log-access question
+                main.postDelayed({ cm.setPrimaryClip(android.content.ClipData.newPlainText("test", text)) }, 12000)
                 return@let
             }
             if (mode.startsWith("copy_only:")) { // as if copied in another app, then LAN Share left
