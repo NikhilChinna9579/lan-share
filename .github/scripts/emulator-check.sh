@@ -187,6 +187,8 @@ shade_open() { A shell cmd statusbar expand-notifications; sleep 2; }
 shade_open; shot 06b-clip-notification
 until_ok 10 "KEEP_SHADE=1 tap_text Copy"; sleep 1; shade_closed
 expect 10 'clipboard: copied what came from DESKTOP-NIKHIL' "…Copy puts it on the phone's clipboard"
+MS=$(applog | tail -n +$((MARK + 1)) | grep -oE 'Copy took [0-9]+ ms' | tail -1 | grep -oE '[0-9]+' || true)
+[ -n "$MS" ] && [ "$MS" -lt 500 ] && pass "…at once (${MS} ms), no repeated tapping" || fail "Copy button was slow (${MS:-?} ms)"
 run_hook ask_clip_off
 mark; api /api/clip/copy '{"text":"Straight in 9921"}' >/dev/null
 expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars \(on the clipboard\)' "with asking off: straight onto the phone's clipboard"
@@ -214,6 +216,13 @@ api /api/clip/again >/dev/null
 api /api/clip | grep -q 'Copied on the phone 4417' && pass "…Copy on the laptop puts it there" || fail "laptop Copy of the offered text"
 mark; app 3; sleep 3
 seen 'clipboard auto:' && fail "the same copy was sent again" || pass "…only once, not on every open"
+# Quick Settings tile "Send copied text": copy in another app, tap the tile.
+run_hook "copy_only:Tile copy 5150"; sleep 2
+A shell cmd statusbar add-tile $PKG/.ClipTile >/dev/null 2>&1
+mark; A shell cmd statusbar click-tile $PKG/.ClipTile >/dev/null 2>&1
+expect 15 'assistant: send copied text \(tile\)' "Quick Settings tile opens and reads what's copied"
+until_ok 15 "api /api/clip | grep -q 'Tile copy 5150'" && pass "…and one tap puts it on the laptop's clipboard" || fail "tile copy reached the laptop"
+A shell cmd statusbar remove-tile $PKG/.ClipTile >/dev/null 2>&1; shade_closed
 bail_if_crashed "clipboard"
 
 # ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off

@@ -72,6 +72,17 @@ async function step(name, fn) {
   const openLog = path.join(work, "opened.txt"); // what the laptop "opened" (instead of launching apps)
   process.env.LANSHARE_OPEN_LOG = openLog;
   const win = process.platform === "win32";
+  // Windows: the "Copied on …" box: is it showing, and press its Copy button (through
+  // Windows itself, as a click would).
+  const clipPopup = (what) => execFileSync("powershell", ["-NoProfile", "-Command",
+    `Add-Type -Name P -Namespace U2 -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr FindWindow(string c, string t); ` +
+    `[DllImport("user32.dll")] public static extern System.IntPtr FindWindowEx(System.IntPtr p, System.IntPtr a, string c, string t); ` +
+    `[DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h); ` +
+    `[DllImport("user32.dll")] public static extern System.IntPtr SendMessage(System.IntPtr h, int m, System.IntPtr w, System.IntPtr l);'; ` +
+    `$h = [U2.P]::FindWindow('LanShareClipPopup', [NullString]::Value); ` +
+    (what === "click"
+      ? `$b = [U2.P]::FindWindowEx($h, [System.IntPtr]::Zero, 'Button', 'Copy'); if ($b -eq [System.IntPtr]::Zero) { 'no button' } else { [void][U2.P]::SendMessage($b, 0xF5, [System.IntPtr]::Zero, [System.IntPtr]::Zero); 'clicked' }`
+      : `if ($h -ne [System.IntPtr]::Zero -and [U2.P]::IsWindowVisible($h)) { 'yes' } else { 'no' }`)], { timeout: 30_000 }).toString().trim();
   // Windows: is the bubble window on screen?
   let bubbleSaw = "";
   const bubbleVisible = () => (bubbleSaw = execFileSync("powershell", ["-NoProfile", "-Command",
@@ -388,11 +399,20 @@ async function step(name, fn) {
     await step("shared clipboard: copied on the phone by itself: offered with Copy, not pasted over", async () => {
       await page.evaluate(() => api("/api/clip/set", {text: "keep me"}));
       start("phone-clip-auto", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47862", "-clip-push", "Auto copy 5512", "-clip-auto"]);
-      const card = page.locator(".card.clip", { hasText: "Copied on Nikhil's phone" });
-      await card.getByText("Auto copy 5512").waitFor({ timeout: 10_000 });
-      if ((await page.evaluate(() => api("/api/clip", {}))).text !== "keep me") throw new Error("replaced the clipboard without asking");
-      await settle(); await page.screenshot({ path: path.join(out, "w08i2-clip-offered.png") });
-      await card.locator('[data-act="clipcopy"]').click();
+      if (win) { // its own small box at the bottom-right of the screen, not in this window
+        await waitFor("the Copied box", () => clipPopup("visible") === "yes", 15_000);
+        if (await page.locator(".card.clip", { hasText: "Copied on Nikhil's phone" }).count()) throw new Error("also shown inside the window");
+        if ((await page.evaluate(() => api("/api/clip", {}))).text !== "keep me") throw new Error("replaced the clipboard without asking");
+        const r = clipPopup("click");
+        if (r !== "clicked") throw new Error("Copy button: " + r);
+        await waitFor("the box closed", () => clipPopup("visible") === "no", 10_000);
+      } else {
+        const card = page.locator(".card.clip", { hasText: "Copied on Nikhil's phone" });
+        await card.getByText("Auto copy 5512").waitFor({ timeout: 10_000 });
+        if ((await page.evaluate(() => api("/api/clip", {}))).text !== "keep me") throw new Error("replaced the clipboard without asking");
+        await settle(); await page.screenshot({ path: path.join(out, "w08i2-clip-offered.png") });
+        await card.locator('[data-act="clipcopy"]').click();
+      }
       await waitFor("copied after clicking Copy", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "Auto copy 5512");
       // "Paste right away" setting: straight in.
       await page.evaluate(() => api("/api/settings", {clipNow: true}));

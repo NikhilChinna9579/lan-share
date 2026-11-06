@@ -71,6 +71,18 @@
             android:theme="@style/Theme.LanShare.Assistant"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- Quick Settings tile: "Send copied text" to the laptop in one tap. -->
+        <service
+            android:name=".ClipTile"
+            android:exported="true"
+            android:icon="@drawable/ic_stat"
+            android:label="Send copied text"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- The Copy button on "Copied on NIKHIL-PC". -->
         <receiver
             android:name=".Clip$CopyReceiver"

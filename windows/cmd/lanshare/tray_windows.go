@@ -244,6 +244,9 @@ func (t *tray) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 		default:
 		}
 		return 0
+	case message == wmClipPopup:
+		t.clipPopupShow()
+		return 0
 	case message == wmBubble:
 		t.bubbleUpdate()
 		return 0

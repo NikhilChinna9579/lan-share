@@ -80,8 +80,10 @@ object Clip {
             val dir = java.io.File(ctx.filesDir, "clip_in")
             val text = runCatching { java.io.File(dir, "$id.txt").readText() }.getOrNull() ?: return
             val from = runCatching { java.io.File(dir, "$id.from").readText() }.getOrDefault("your laptop")
+            ctx.getSystemService(NotificationManager::class.java).cancel(NOTE_ASK) // gone at once
+            val t0 = System.currentTimeMillis()
             write(ctx, text, from, notify = false)
-            ctx.getSystemService(NotificationManager::class.java).cancel(NOTE_ASK)
+            Log.i("LanShare", "clipboard: Copy took ${System.currentTimeMillis() - t0} ms")
             Log.i("LanShare", "clipboard: copied what came from $from")
             android.widget.Toast.makeText(ctx, "Copied. Paste anywhere.", android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -92,14 +94,18 @@ object Clip {
         val app = ctx.applicationContext
         remember(app, text) // came from there: never sent back
         selfWriteAt = System.currentTimeMillis() // the watcher ignores our own change
-        val done = CountDownLatch(1)
-        main.post {
+        val put = {
             runCatching {
                 app.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("From $from", text))
             }.onFailure { Log.w("LanShare", "clipboard: $it") }
-            done.countDown()
         }
-        done.await(2, TimeUnit.SECONDS)
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            put() // already on the main thread (the notification's Copy button): no waiting on ourselves
+        } else {
+            val done = CountDownLatch(1)
+            main.post { put(); done.countDown() }
+            done.await(2, TimeUnit.SECONDS)
+        }
         Log.i("LanShare", "clipboard from $from: ${text.length} chars (on the clipboard)")
         if (notify) {
             val nm = app.getSystemService(NotificationManager::class.java)

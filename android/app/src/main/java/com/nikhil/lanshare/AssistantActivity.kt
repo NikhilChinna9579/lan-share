@@ -115,6 +115,7 @@ class AssistantActivity : Activity() {
         // Opened by "Hey Jarvis": start listening at once.
         if (intent.getBooleanExtra("listen", false)) main.postDelayed({ listen() }, 300)
         // Debug builds: tests pass a sentence instead of speaking it.
+        pendingClipSend = intent.getBooleanExtra(EXTRA_SEND_CLIP, false)
         val say = intent.getStringExtra("say")
         if (say != null && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) main.postDelayed({ handle(say) }, 600)
     }
@@ -130,8 +131,27 @@ class AssistantActivity : Activity() {
         presence.start()
     }
 
+    /** Opened from the "Send copied text" tile: send what's copied once we can read it. */
+    private var pendingClipSend = false
+
+    // Already open (it's single-task) and the tile is tapped again.
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_SEND_CLIP, false)) {
+            pendingClipSend = true
+            if (hasWindowFocus()) onWindowFocusChanged(true)
+        }
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && pendingClipSend) { // (Android lets us read the clipboard only now)
+            pendingClipSend = false
+            Log.i(TAG, "assistant: send copied text (tile)")
+            sendClipboard(Commands.Command.Send(Commands.What.CLIPBOARD, null, null, null))
+            return
+        }
         if (hasFocus) Clip.autoSend(this, { DeviceStore.all(this).filter { presence.status(it.id).state == Presence.State.ONLINE } }) { d, t ->
             Actions.sendClip(this, d, t, { e -> e.message ?: e.toString() }, auto = true)
         }
@@ -680,6 +700,8 @@ class AssistantActivity : Activity() {
 
     companion object {
         private const val TAG = "LanShare"
+        /** Opened from the Quick Settings tile: send what's copied. */
+        const val EXTRA_SEND_CLIP = "send_clip"
         /** True while the assistant is on screen (the wake word listener steps aside). */
         @Volatile var open = false
     }

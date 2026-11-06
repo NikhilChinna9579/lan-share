@@ -313,7 +313,8 @@ function render() {
   // Shared clipboard: the last text a phone sent here (it's on the clipboard already).
   const recent = (c) => c && Date.now() - new Date(c.at).getTime() < 30 * 60_000;
   let clip = "";
-  if (recent(S.clipIn)) {
+  // Offered text shows in its own box on Windows (outside this window), not here.
+  if (recent(S.clipIn) && !(S.clipIn.offered && S.me.clipPopup)) {
     clip = `<div class="card tr clip"><div class="row"><div class="badge">${icon("clip")}</div>
       <div class="grow"><div class="t1">${S.clipIn.offered ? "Copied on" : "Copied from"} ${esc(S.clipIn.device)} <span class="small">· ${ago(S.clipIn.at)} · ${S.clipIn.offered ? "click Copy to paste it here" : "paste with Ctrl+V"}</span></div>
       <div class="cliptext">${esc(S.clipIn.text)}</div></div>
