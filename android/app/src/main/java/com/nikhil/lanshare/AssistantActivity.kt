@@ -61,7 +61,7 @@ class AssistantActivity : Activity() {
 
     /** A choice offered on screen; while [asking], saying its label picks it too. */
     private class Option(val label: String, val icon: Int = R.drawable.ic_chevron, val sub: String? = null,
-                         val chip: String? = null, val run: (() -> Unit)?)
+                         val chip: String? = null, val thumb: android.graphics.Bitmap? = null, val run: (() -> Unit)?)
 
     private var options: List<Option> = emptyList()
     private var asking = false
@@ -190,7 +190,12 @@ class AssistantActivity : Activity() {
         choices.removeAllViews()
         for (o in list) {
             val r = LayoutInflater.from(this).inflate(R.layout.item_sheet_row, choices, false)
-            r.findViewById<ImageView>(R.id.rowIcon).setImageResource(o.icon)
+            r.findViewById<ImageView>(R.id.rowIcon).apply {
+                if (o.thumb != null) { // a preview of the photo itself
+                    setImageBitmap(o.thumb); imageTintList = null; setPadding(0, 0, 0, 0)
+                    scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true
+                } else setImageResource(o.icon)
+            }
             r.findViewById<TextView>(R.id.rowLabel).text = o.label
             r.findViewById<TextView>(R.id.rowSub).apply { text = o.sub; visibility = if (o.sub == null) View.GONE else View.VISIBLE }
             r.findViewById<TextView>(R.id.rowChip).apply { text = o.chip; visibility = if (o.chip == null) View.GONE else View.VISIBLE }
@@ -349,23 +354,33 @@ class AssistantActivity : Activity() {
                 else -> Actions.latest(this, c.what)?.let { listOf(it) }
             }
             val items = uris?.let { runCatching { Client.resolveFiles(this, it) }.getOrNull() }
-            // Nothing shared: offer the newest photo and screenshot ("show me").
-            val photo = if (items == null && c.what == Commands.What.THIS) Actions.latest(this, Commands.What.PHOTO) else null
-            val shot = if (items == null && c.what == Commands.What.THIS) Actions.latest(this, Commands.What.SCREENSHOT) else null
-            val photoItem = photo?.let { runCatching { Client.resolveFiles(this, listOf(it)) }.getOrNull() }
-            val shotItem = shot?.let { runCatching { Client.resolveFiles(this, listOf(it)) }.getOrNull() }
+            // Nothing shared: Android doesn't tell an app what another app (Photos…) has open,
+            // so offer the newest photo and screenshot, with previews, newest first.
+            class Guess(val label: String, val at: Long, val item: List<Client.Outgoing>, val thumb: android.graphics.Bitmap?)
+            val guesses = if (items != null || c.what != Commands.What.THIS) emptyList() else
+                listOf(Commands.What.PHOTO to "Latest photo", Commands.What.SCREENSHOT to "Latest screenshot").mapNotNull { (w, label) ->
+                    val (uri, at) = Actions.latestWithDate(this, w) ?: return@mapNotNull null
+                    val item = runCatching { Client.resolveFiles(this, listOf(uri)) }.getOrNull() ?: return@mapNotNull null
+                    val thumb = runCatching { contentResolver.loadThumbnail(uri, android.util.Size(dp(80), dp(80)), null) }.getOrNull()
+                    Guess(label, at, item, thumb)
+                }.sortedByDescending { it.at }
+            Log.i(TAG, "assistant: send this: ${guesses.joinToString { it.label }.ifEmpty { "no guesses" }}")
             ui {
                 if (!items.isNullOrEmpty()) return@ui toDevice(c, items, null)
                 val q = when (c.what) {
-                    Commands.What.THIS -> "Which file?"
+                    Commands.What.THIS -> if (guesses.isEmpty()) "Which file?" else "Is it this one?"
                     Commands.What.NAMED -> "I couldn't find “${c.name}”"
                     else -> "I couldn't find a ${c.what.name.lowercase()}"
                 }
-                val sub = if (c.what != Commands.What.THIS && !SharedFolders.canReadMedia(this))
-                    "Allow LAN Share to see photos in its Settings, or choose a file." else "Choose one:"
+                val sub = when {
+                    c.what != Commands.What.THIS && !SharedFolders.canReadMedia(this) -> "Allow LAN Share to see photos in its Settings, or choose a file."
+                    c.what == Commands.What.THIS -> "Android doesn't let me see what's open in other apps. For the exact one, tap Share there → LAN Share."
+                    else -> "Choose one:"
+                }
                 val opts = mutableListOf<Option>()
-                photoItem?.firstOrNull()?.let { f -> opts += Option("Latest photo", R.drawable.ic_image, sub = f.name) { toDevice(c, photoItem, null) } }
-                shotItem?.firstOrNull()?.let { f -> opts += Option("Latest screenshot", R.drawable.ic_image, sub = f.name) { toDevice(c, shotItem, null) } }
+                guesses.forEach { g ->
+                    opts += Option(g.label, R.drawable.ic_image, sub = "${g.item.first().name} · ${ago(g.at)}", thumb = g.thumb) { toDevice(c, g.item, null) }
+                }
                 opts += Option("Choose a file…", R.drawable.ic_file) { pickFiles { toDevice(c, it, null) } }
                 ask(q, sub, opts)
             }

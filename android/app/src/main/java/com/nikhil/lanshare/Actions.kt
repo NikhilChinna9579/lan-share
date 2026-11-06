@@ -191,7 +191,10 @@ object Actions {
     // ------------------------------------------------------------- finding "this file"
 
     /** The newest photo, screenshot, video or download on this phone; null if none (or no permission). */
-    fun latest(ctx: Context, what: Commands.What): Uri? {
+    fun latest(ctx: Context, what: Commands.What): Uri? = latestWithDate(ctx, what)?.first
+
+    /** The newest photo/screenshot/…, and when it was added (ms). */
+    fun latestWithDate(ctx: Context, what: Commands.What): Pair<Uri, Long>? {
         val vol = MediaStore.VOLUME_EXTERNAL
         val (collection, sel) = when (what) {
             Commands.What.PHOTO -> MediaStore.Images.Media.getContentUri(vol) to "${MediaStore.MediaColumns.RELATIVE_PATH} NOT LIKE '%Screenshots%'"
@@ -201,9 +204,9 @@ object Actions {
             else -> return null
         }
         return runCatching {
-            ctx.contentResolver.query(collection, arrayOf(MediaStore.MediaColumns._ID), sel, null,
+            ctx.contentResolver.query(collection, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED), sel, null,
                 "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
-                if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) else null
+                if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) to c.getLong(1) * 1000 else null
             }
         }.getOrNull()
     }

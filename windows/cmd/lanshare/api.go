@@ -284,6 +284,20 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return a.openRemote(in.Device, in.Folder, in.Path, in.Name, in.Size, in.Modified)
 	})
+	h("/api/sendopen", func(r *http.Request) (any, error) { // "Send what's open"
+		var in struct {
+			Title             string
+			Selection, Recent []string
+		}
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		if in.Title == "" && len(in.Selection) == 0 { // the window last in front (Windows)
+			go a.sendFront(0)
+			return nil, nil
+		}
+		return nil, a.sendWhatsOpen(openWindowInfo{Title: in.Title, Selection: in.Selection, Recent: in.Recent})
+	})
 	h("/api/reopen", func(r *http.Request) (any, error) {
 		var in struct{ ID string }
 		if err := readJSON(r, &in); err != nil {

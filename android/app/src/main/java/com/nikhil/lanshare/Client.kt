@@ -324,6 +324,11 @@ fun formatDuration(ms: Long): String = when {
 }
 
 /** "2.4 MB" */
+/** "just now", "5 minutes ago", "yesterday"… */
+fun ago(t: Long): String =
+    if (System.currentTimeMillis() - t < 60_000) "just now"
+    else android.text.format.DateUtils.getRelativeTimeSpanString(t, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
+
 fun formatSize(n: Long): String = when {
     n >= 1L shl 30 -> String.format("%.2f GB", n / (1L shl 30).toDouble())
     n >= 1L shl 20 -> String.format("%.1f MB", n / (1L shl 20).toDouble())

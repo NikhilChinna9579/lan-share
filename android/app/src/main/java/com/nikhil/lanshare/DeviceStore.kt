@@ -46,12 +46,14 @@ object DeviceStore {
     }
 
     private fun save(ctx: Context, list: List<Device>) {
+        val changed = all(ctx).map { it.id to it.name } != list.map { it.id to it.name }
         val arr = JSONArray()
         list.forEach {
             arr.put(JSONObject().put("id", it.id).put("name", it.name).put("host", it.host)
                 .put("port", it.port).put("pairedAt", it.pairedAt).put("platform", it.platform))
         }
         prefs(ctx).edit().putString(KEY, arr.toString()).commit()
+        if (changed) DirectShare.update(ctx) // Share-menu targets follow pairing, forgetting, renames
     }
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

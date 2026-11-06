@@ -74,7 +74,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         edgeToEdge()
-        worker.execute { RemoteCache.clean(this) }
+        worker.execute { RemoteCache.clean(this); DirectShare.update(this) }
 
         receiveDot = findViewById(R.id.receiveDot)
         receiveStatus = findViewById(R.id.receiveStatus)
@@ -404,10 +404,6 @@ class MainActivity : Activity() {
         (v.background.mutate() as GradientDrawable).setColor(getColor(bg))
         v.imageTintList = ColorStateList.valueOf(getColor(fg))
     }
-
-    private fun ago(t: Long): String =
-        if (System.currentTimeMillis() - t < 60_000) "just now"
-        else DateUtils.getRelativeTimeSpanString(t, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
 
     // ------------------------------------------------------------------ message card
 
@@ -819,7 +815,10 @@ class MainActivity : Activity() {
         }
         setIntent(Intent()) // don't resend after rotation
         Hub.shared(uris) // "this file" for the assistant, for a few minutes
-        val devices = DeviceStore.all(this)
+        // "Share → Nikhil PC" (a Direct Share target): that device, no need to ask which.
+        val direct = DirectShare.deviceFor(this, intent)
+        if (direct != null) Log.i(TAG, "direct share to ${direct.name}: ${uris.size} file(s)")
+        val devices = direct?.let { listOf(it) } ?: DeviceStore.all(this)
         // Shared text (a link, a message): onto a laptop's clipboard, ready to paste.
         val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()
         if (uris.isEmpty() && !text.isNullOrEmpty()) {
@@ -1108,6 +1107,11 @@ class MainActivity : Activity() {
             f.delete()
             Log.i(TAG, "test hook: $mode")
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
+            if (mode.startsWith("ask:")) { // a sentence with nothing shared first
+                Hub.shared(emptyList())
+                startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", mode.removePrefix("ask:")))
+                return@let
+            }
             if (mode.startsWith("say:")) { // a file just shared + a sentence for the assistant
                 val f = File(cacheDir, "Shared note.txt").apply { writeBytes(ByteArray(200_000) { (it % 13).toByte() }) }
                 Hub.shared(listOf(Uri.fromFile(f)))

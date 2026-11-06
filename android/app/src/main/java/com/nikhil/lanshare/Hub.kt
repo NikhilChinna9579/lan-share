@@ -132,7 +132,7 @@ object Hub {
     @Volatile private var lastShared: Pair<Long, List<android.net.Uri>>? = null
     fun shared(uris: List<android.net.Uri>) { lastShared = System.currentTimeMillis() to uris }
     fun recentlyShared(): List<android.net.Uri>? =
-        lastShared?.takeIf { System.currentTimeMillis() - it.first < 10 * 60_000 }?.second
+        lastShared?.takeIf { System.currentTimeMillis() - it.first < 10 * 60_000 }?.second?.takeIf { it.isNotEmpty() }
 
     private val failStreak = ConcurrentHashMap<String, Int>()
 

@@ -282,6 +282,21 @@ async function step(name, fn) {
       await waitFor("saved copy in Downloads", () => fs.existsSync(saved) && fs.statSync(saved).size === 460_000);
     });
 
+    await step("“Send what's open”: the file in the window in front goes to the send sheet", async () => {
+      const f = path.join(work, "Trip plan.docx");
+      fs.writeFileSync(f, crypto.randomBytes(40_000));
+      // As if Word showed "Trip plan - Word" and Windows listed the file as recently opened.
+      await page.evaluate((f) => api("/api/sendopen", {title: "Trip plan - Word", recent: [f]}), f);
+      await page.locator(".sheet .r", { hasText: "Trip plan.docx" }).waitFor();
+      await page.locator('[data-act="root"]', { hasText: "Downloads" }).click();
+      await page.locator('[data-act="dosend"]').click();
+      const dest = path.join(phoneInbox, "Trip plan.docx");
+      await waitFor("the open file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 40_000, 15_000);
+      // Can't tell: says so instead of sending something else.
+      await page.evaluate(() => api("/api/sendopen", {title: "Untitled - Paint"}).catch(() => {}));
+      await page.getByText("Couldn't tell which file is open").first().waitFor();
+    });
+
     await step("search the phone's folders and get a file from a subfolder", async () => {
       const name = "Budget 2026.xlsx";
       fs.rmSync(path.join(laptopDownloads, name), { force: true });

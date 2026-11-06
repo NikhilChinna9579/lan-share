@@ -158,7 +158,7 @@ func (a *app) saveCopy(id string) (string, error) {
 		return "", errors.New("no default folder")
 	}
 	dst := files.UniquePath(dir, filepath.Base(src))
-	if err := copyFile(src, dst); err != nil {
+	if err := copyNew(src, dst); err != nil {
 		return "", err
 	}
 	device := ""
@@ -187,7 +187,7 @@ func (a *app) openedPath(id string) string {
 	return ""
 }
 
-func copyFile(src, dst string) error {
+func copyNew(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err

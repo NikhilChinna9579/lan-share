@@ -290,6 +290,12 @@ until_ok 10 "tap_text input" && A shell input text documents && A shell input ke
 expect 15 'assistant: plan send Voice memo 2.m4a to DESKTOP-NIKHIL in Documents' "assistant took the answer"
 until_ok 30 "[ \"\$(stat -c %s '$HOME/Documents/Voice memo 2.m4a' 2>/dev/null)\" = 300000 ]" \
   && pass "follow-up send arrived in Documents" || fail "follow-up send arrived in Documents"
+# "send this" with nothing shared: Android can't tell us what Photos has open, so it
+# offers the newest photo/screenshot, with a preview, and asks.
+mark; hook demo.txt "ask:send this to my laptop"; app 3
+expect 20 'assistant: send this: ' "“send this” with nothing shared looks for the latest photo/screenshot"
+expect 10 'assistant: asking: (Is it this one\?|Which file\?)' "…and asks before sending anything"
+shot 15b-send-this
 # c) Getting a file by name: "get meeting notes from my laptop".
 head -c 400000 /dev/urandom > "$HOME/Documents/Meeting notes.txt"
 mark; hook demo.txt assistant_get; app 3
@@ -345,6 +351,18 @@ mark; hook demo.txt "say:send this to test phone in downloads"; app 3
 expect 20 'assistant: plan send Shared note.txt to Test phone in Downloads' "assistant sends to the other phone"
 until_ok 30 "[ \"\$(stat -c %s '$WORK/phone2/inbox/Download/Shared note.txt' 2>/dev/null)\" = 200000 ]" \
   && pass "file arrived on the other phone" || fail "file arrived on the other phone"
+# Direct Share: paired devices are one-tap targets in every app's Share menu. With two
+# paired now, a Share aimed at the laptop goes straight there, without asking which.
+A shell dumpsys shortcut > "$WORK/shortcuts.txt" 2>/dev/null
+LAPID=$(grep -oE 'dev:[0-9a-f]{16,}' "$WORK/shortcuts.txt" | grep -v "$P2ID" | head -1)
+grep -q "dev:$P2ID" "$WORK/shortcuts.txt" && [ -n "$LAPID" ] \
+  && pass "paired laptop and phone appear as targets in the Share menu" || fail "Direct Share targets ($(grep -c 'dev:' "$WORK/shortcuts.txt") found)"
+if [ -n "$LAPID" ]; then
+  mark; A shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "direct-share-check" \
+    --es android.intent.extra.shortcut.ID "$LAPID" -n $PKG/.MainActivity >/dev/null
+  expect 15 'direct share to DESKTOP-NIKHIL' "Share → the laptop's target picks it without asking"
+  until_ok 20 "api /api/clip | grep -q 'direct-share-check'" && pass "…and the shared text is on that laptop" || fail "direct-shared text on the laptop"
+fi
 kill $P2 2>/dev/null
 # And the other way: this phone shows a code, the other phone pairs with it.
 mark; hook demo.txt allow_pair; app 3
