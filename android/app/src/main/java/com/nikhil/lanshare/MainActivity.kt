@@ -652,9 +652,9 @@ class MainActivity : Activity() {
                 Clip.setAskFirst(this, !ask); fillSharedFolders(sheet)
             })
             val why = ClipWatcher.problem(this)
-            sheet.add(Sheet.Row(R.drawable.ic_shield, "Copies here go to laptops with no tap",
-                sub = why ?: "On: copy in any app, paste on the laptop",
-                chip = if (why == null) "On" else "Advanced", dismiss = false) { explainWatcher() })
+            sheet.add(Sheet.Row(R.drawable.ic_shield, "Notify my laptops when I copy here",
+                sub = why ?: "On: copy anything; your laptops show it with a Copy button",
+                chip = if (why == null) "On" else "Set up", dismiss = false) { explainWatcher() })
             val auto = Clip.autoEnabled(this)
             sheet.add(Sheet.Row(R.drawable.ic_document, "Send what I copy here automatically",
                 sub = if (auto) "When LAN Share or the bubble opens (Android allows it only then)" else "Off: send it from the bubble or the Send sheet",
@@ -829,22 +829,24 @@ class MainActivity : Activity() {
         if (uris.isNotEmpty()) chooseFolder(target, uris)
     }
 
-    /** How to turn on the no-tap phone → laptop clipboard (a one-time grant from a computer). */
+    /** How to turn on "notify my laptops when I copy here" (once, in Accessibility). */
     private fun explainWatcher() {
-        val sheet = Sheet(this, "Copies here → laptops, no tap",
-            "Android only lets the app on screen read what's copied. With a one-time permission, given from a computer, " +
-            "LAN Share notices each copy and sends it (Android shows a small “pasted from your clipboard” note each time).")
-        val steps = listOf(
-            "1. On the phone: Settings → About phone → tap Build number 7 times; then Developer options → USB debugging on.",
-            "2. Connect the phone to the laptop with a cable (or use Wireless debugging) and allow it.",
-            "3. On the laptop, run:\n${ClipWatcher.GRANT_COMMAND}",
-            "4. Open LAN Share; if Android asks to allow access to device logs, choose Allow.",
-        )
-        steps.forEach { sheet.message(it) }
-        ClipWatcher.problem(this)?.let { sheet.note("Now: $it") } ?: sheet.note("It's on.")
-        sheet.primary("Copy the command") {
-            getSystemService(android.content.ClipboardManager::class.java)
-                .setPrimaryClip(android.content.ClipData.newPlainText("command", ClipWatcher.GRANT_COMMAND))
+        val on = ClipAccessibility.isOn(this)
+        val sheet = Sheet(this, "Notify my laptops when I copy",
+            "Android doesn't tell apps when you copy something. Switched on once in Accessibility, LAN Share notices " +
+            "Android's “Copied” preview and Copy buttons, and your laptops show “Copied on ${myName}” with a Copy button. " +
+            "It doesn't read or keep anything else on your screen.")
+        if (!on) {
+            sheet.message("1. Tap “Allow restricted settings” below → ⋮ (top right) → Allow restricted settings. " +
+                "(Android asks this for apps not from the Play Store.)")
+            sheet.message("2. Tap “Turn on in Accessibility” → LAN Share → switch it on.")
+            sheet.add(Sheet.Row(R.drawable.ic_shield, "Allow restricted settings", sub = "Opens LAN Share's App info", dismiss = false) {
+                runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+            })
+        }
+        sheet.note(if (on) "It's on." else null)
+        sheet.primary(if (on) "Accessibility settings" else "Turn on in Accessibility") {
+            runCatching { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
         sheet.show()
     }

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LAN Share</string>
+    <string name="clip_accessibility_desc">Lets LAN Share notice when you copy something on this phone, so your laptops can show \"Copied on your phone\" with a Copy button. It only looks for Android\'s \"Copied\" preview, \"Copied\" messages and Copy buttons; it doesn\'t read or keep anything else on your screen.</string>
+    <string name="clip_accessibility_label">LAN Share: notify my laptops when I copy</string>
 </resources>

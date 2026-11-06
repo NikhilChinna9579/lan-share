@@ -476,25 +476,21 @@ expect 10 'row: Stay reachable' "settings offer 'stay reachable'"
 expect 5 'row: Floating assistant bubble' "settings offer the bubble"
 night yes; hook demo.txt folders; app 4; shot 12-shared-folders-dark; night no
 
-# ---------------------------------------------------------------- 11a. no-tap copying on the phone (advanced)
-# The no-tap mode: the one-time permission from a computer, as a person would grant it.
-A shell pm grant $PKG android.permission.READ_LOGS
-A shell appops set $PKG SYSTEM_ALERT_WINDOW allow
-api /api/settings '{"clipNow":true}' >/dev/null   # the laptop's "paste right away" setting
-# One launch: LAN Share goes to the background after 6 s, and something is copied "in
-# another app" at 12 s.
+# ---------------------------------------------------------------- 11a. "notify my laptops when I copy here"
+# Switched on once in Accessibility (here through settings, as the switch does). Then a copy
+# made while LAN Share is in the background shows up on the laptop with a Copy button.
+A shell appops set $PKG SYSTEM_ALERT_WINDOW deny   # without the bubble's permission too
+mark
+A shell settings put secure enabled_accessibility_services $PKG/.ClipAccessibility
+A shell settings put secure accessibility_enabled 1
+expect 20 'copy detector: on' "copy detector switched on in Accessibility"
 mark; hook demo.txt "bg_copy:Copied in another app 7781"; app 2
-# Android 13+ asks each time the watcher starts: "Allow LAN Share to access all device logs?"
-sleep 1; shot 06c-log-access
-until_ok 8 "tap_text 'Allow one-time access'" && log "note  answered the log-access question"
-expect 15 'clipboard watcher: on' "with the permission: watching for copies in other apps"
-expect 30 'clipboard watcher: copy seen' "a copy in another app is noticed, LAN Share in the background"
-until_ok 20 "api /api/clip | grep -q 'Copied in another app 7781'" && pass "…and it's on the laptop's clipboard with no tap" || fail "no-tap copy reached the laptop"
-api /api/settings '{"clipNow":false}' >/dev/null
-shot 06c-after-watch
-A shell appops set $PKG SYSTEM_ALERT_WINDOW deny
-A shell pm revoke $PKG android.permission.READ_LOGS 2>/dev/null   # (and the question stops coming up)
-bail_if_crashed "clipboard watcher"
+sleep 12; shot 06c-copied-preview
+expect 20 'clipboard watcher: copy seen' "a copy made in another app is noticed"
+until_ok 20 "get /api/state | grep -q 'Copied in another app 7781'" && pass "…and the laptop shows it with a Copy button" || fail "phone copy offered on the laptop"
+api /api/clip | grep -q 'Copied in another app 7781' && fail "the laptop replaced its clipboard without asking" || pass "…without replacing the laptop's clipboard"
+A shell settings put secure enabled_accessibility_services '""'
+bail_if_crashed "copy detector"
 
 # ---------------------------------------------------------------- 10. firewall-like one-way problem
 # Restart the laptop program so it refuses incoming connections (as a blocking Windows

@@ -35,9 +35,10 @@ object ClipWatcher {
 
     fun wanted(ctx: Context) = Clip.enabled(ctx) && available(ctx)
 
-    /** Why it isn't working yet, or null if it is (for Settings). */
+    /** Why "notify my laptops when I copy here" isn't working yet, or null if it is (Settings). */
     fun problem(ctx: Context): String? = when {
-        !available(ctx) -> "Needs a one-time permission from a computer (see below)"
+        ClipAccessibility.isOn(ctx) -> null
+        !available(ctx) -> "Off: turn it on once in Accessibility (tap for the steps)"
         !android.provider.Settings.canDrawOverlays(ctx) -> "Also needs “Display over other apps” (the bubble's permission)"
         !running -> "Open LAN Share once to start it (Android asks to allow log access)"
         else -> null
@@ -64,7 +65,7 @@ object ClipWatcher {
         Thread {
             runCatching {
                 p.inputStream.bufferedReader().forEachLine { line ->
-                    if ("Denying clipboard access to ${app.packageName}" in line) changed(app)
+                    if ("Denying clipboard access to ${app.packageName}" in line) copied(app, "system log")
                 }
             }
             Log.i(TAG, "clipboard watcher: stopped")
@@ -80,13 +81,13 @@ object ClipWatcher {
         running = false
     }
 
-    /** Something was copied in another app. */
-    private fun changed(ctx: Context) {
+    /** Something was copied in another app (seen in the system log, or by [ClipAccessibility]). */
+    fun copied(ctx: Context, how: String) {
+        if (!Clip.enabled(ctx)) return
         val now = System.currentTimeMillis()
         if (now - Clip.selfWriteAt < 1500 || now - lastFire < 700) return // our own write, or a burst
         lastFire = now
-        if (!android.provider.Settings.canDrawOverlays(ctx)) { Log.i(TAG, "clipboard watcher: copy seen, but can't read it (no overlay permission)"); return }
-        Log.i(TAG, "clipboard watcher: copy seen")
+        Log.i(TAG, "clipboard watcher: copy seen ($how)")
         runCatching {
             ctx.startActivity(Intent(ctx, ClipReadActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS))
