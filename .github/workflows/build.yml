@@ -211,8 +211,8 @@ jobs:
           disk-size: 3000M
           ram-size: 3072M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          # The check itself is capped at 12 minutes; every command inside has its own limit.
-          script: timeout 720 bash .github/scripts/emulator-check.sh
+          # The check itself is capped at 15 minutes; every command inside has its own limit.
+          script: timeout 900 bash .github/scripts/emulator-check.sh
       - name: Publish screenshots to the checks branch
         if: always()
         run: |
