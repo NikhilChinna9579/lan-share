@@ -485,7 +485,12 @@ A shell settings put secure enabled_accessibility_services $PKG/.ClipAccessibili
 A shell settings put secure accessibility_enabled 1
 expect 20 'copy detector: on' "copy detector switched on in Accessibility"
 mark; hook demo.txt "bg_copy:Copied in another app 7781"; app 2
-sleep 12; shot 06c-copied-preview
+# The test's restart is a force-stop, which also stops accessibility services (a person never
+# does this); switch it back on, as Android does when the app starts normally.
+A shell settings put secure enabled_accessibility_services '""'; sleep 1
+A shell settings put secure enabled_accessibility_services $PKG/.ClipAccessibility
+expect 8 'copy detector: on' "copy detector running again"
+sleep 10; shot 06c-copied-preview
 expect 20 'clipboard watcher: copy seen' "a copy made in another app is noticed"
 until_ok 20 "get /api/state | grep -q 'Copied in another app 7781'" && pass "…and the laptop shows it with a Copy button" || fail "phone copy offered on the laptop"
 api /api/clip | grep -q 'Copied in another app 7781' && fail "the laptop replaced its clipboard without asking" || pass "…without replacing the laptop's clipboard"
