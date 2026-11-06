@@ -245,7 +245,8 @@ async function step(name, fn) {
       for (let i = 1; i <= 40; i++) fs.writeFileSync(path.join(path.dirname(src), `IMG_20261101_${String(i).padStart(2, "0")}.jpg`), crypto.randomBytes(3000));
       await sleep(50);
       fs.writeFileSync(src, crypto.randomBytes(300_000)); // newest: listed first
-      await page.locator('.dev [data-act="get"]').first().click();
+      await page.locator('.dev [data-act="browse"]').first().click();
+      await page.locator(".sheet h3", { hasText: "Browse Nikhil's phone" }).waitFor();
       await page.locator('[data-act="root"]', { hasText: "Documents" }).click();
       await page.locator(".r", { hasText: name }).locator('[data-act="pickfile"]').click();
       await page.locator('[data-act="dofetch"]', { hasText: /Get Meeting notes\.txt .* into Downloads/ }).waitFor();
@@ -612,6 +613,14 @@ async function step(name, fn) {
       });
       await page.goto(url2);
       await page.getByText("Sent Holiday photos.zip to Nikhil's phone").first().waitFor();
+    });
+
+    await step("Clear empties Recent activity, and it stays empty after a restart", async () => {
+      await page.locator("#clearHist").click();
+      await waitFor("activity cleared", async () => (await page.evaluate(() => api("/api/state", undefined, "GET"))).activity.length === 0);
+      if (await page.locator("#clearHist").isVisible()) throw new Error("Clear still shown with nothing to clear");
+      const h = JSON.parse(fs.readFileSync(path.join(laptopData, "history.json"), "utf8"));
+      if (h.length !== 0) throw new Error("history.json still has " + h.length + " items");
     });
   } catch (e) {
     if (!failures) { failures++; log(`FAIL  ${e.message}`); } // a crash outside any step still fails the run

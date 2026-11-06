@@ -92,6 +92,7 @@ class MainActivity : Activity() {
         emptyState = findViewById(R.id.emptyState)
         recentLabel = findViewById(R.id.recentLabel)
         recentList = findViewById(R.id.recentList)
+        findViewById<View>(R.id.recentClear).setOnClickListener { Hub.clearHistory() }
 
         val steps = findViewById<LinearLayout>(R.id.steps)
         listOf("Open LAN Share on your laptop", "Click “Show pairing code”", "Tap Scan QR code below and scan it").forEachIndexed { i, text ->
@@ -109,7 +110,7 @@ class MainActivity : Activity() {
         Hub.init(this)
         presence = Presence(this, myName) { renderDevices() }
         worker.execute { runCatching { Identity.ensure(myName) } } // creating the key takes a moment
-        askNotificationPermission()
+        if (!Prefs.setupShown(this)) ui { showSetup() } else askNotificationPermission()
         ReceiveService.start(this)
         render()
         handleShare(intent)
@@ -120,6 +121,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
+        setupSheet?.let { if (it.isShowing) fillSetup(it) } // back from a settings screen
         Bubble.bringBack(this) // opening LAN Share brings a dismissed bubble back (and covers "back from granting the permission")
         main.postDelayed({ Bubble.update(this); foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }, 800) // some phones report the permission late
         if (!hooksRan) {
@@ -386,6 +388,12 @@ class MainActivity : Activity() {
             isEnabled = s.state == Presence.State.ONLINE
             alpha = if (isEnabled) 1f else 0.4f
             setOnClickListener { getFiles(d) }
+        }
+        row.findViewById<View>(R.id.browse).apply { // its folders: tap a file to open, tick to save
+            isEnabled = s.state == Presence.State.ONLINE
+            alpha = if (isEnabled) 1f else 0.4f
+            setOnClickListener { getFiles(d) }
+            reportPos(this, "Browse ${d.name}")
         }
         val tap = {
             when (s.state) {
@@ -986,7 +994,7 @@ class MainActivity : Activity() {
 
     /** Browse a laptop's shared folders, tick files, and copy them to this phone's Downloads. */
     private fun getFiles(d: Device) {
-        val sheet = Sheet(this, "Get from ${d.name}", "Copies to this phone's Downloads")
+        val sheet = Sheet(this, "Browse ${d.name}", "Tap a file to open it; tick files to save them in Downloads")
         if (Clip.enabled(this)) sheet.add(Sheet.Row(R.drawable.ic_document, "Paste from ${d.name}", sub = "What's copied there, onto this phone's clipboard") { pasteFrom(d) })
         sheet.message("Asking ${d.name} for its folders…")
         sheet.show()
@@ -1104,8 +1112,81 @@ class MainActivity : Activity() {
         }
     }
 
+    // ------------------------------------------------------------------ first start
+
+    private var setupSheet: Sheet? = null
+
+    /**
+     * First start: everything LAN Share can use, in one place, so nobody has to find
+     * Settings. Each can be skipped; all of them stay in Settings ⚙ too.
+     */
+    private fun showSetup() {
+        Prefs.setSetupShown(this) // once, even if closed straight away
+        val sheet = Sheet(this, "Set up LAN Share", "Allow what you'd like to use. You can change these any time in Settings ⚙.")
+        setupSheet = sheet
+        fillSetup(sheet)
+        sheet.primary("Allow all") {
+            val ask = runtimePermissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            Log.i(TAG, "setup: asking for ${ask.size} permission(s)")
+            if (ask.isNotEmpty()) requestPermissions(ask.toTypedArray(), REQUEST_SETUP)
+        }
+        sheet.show()
+        Log.i(TAG, "setup: shown")
+    }
+
+    /** Android's own permission questions (the rest are settings screens). */
+    private fun runtimePermissions(): List<String> =
+        (if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()) +
+            SharedFolders.mediaPermissions().toList() + Manifest.permission.RECORD_AUDIO
+
+    private fun fillSetup(sheet: Sheet) {
+        sheet.clear()
+        fun granted(vararg p: String) = p.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+        fun chip(on: Boolean) = if (on) "Allowed" else null
+        val notify = Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS)
+        sheet.add(Sheet.Row(R.drawable.ic_shield, "Notifications", sub = "Files arriving, and the Copy button for text copied on your laptop",
+            chip = chip(notify), dismiss = false) { if (!notify) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_SETUP) })
+        val media = SharedFolders.canReadMedia(this)
+        sheet.add(Sheet.Row(R.drawable.ic_image, "Photos, videos and music", sub = "So your laptop can browse and get them",
+            chip = chip(media), dismiss = false) { if (!media) requestPermissions(SharedFolders.mediaPermissions(), REQUEST_SETUP) })
+        val mic = granted(Manifest.permission.RECORD_AUDIO)
+        sheet.add(Sheet.Row(R.drawable.ic_mic, "Microphone", sub = "To talk to the assistant (“send this to my laptop”)",
+            chip = chip(mic), dismiss = false) { if (!mic) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_SETUP) })
+        val overlay = android.provider.Settings.canDrawOverlays(this)
+        sheet.add(Sheet.Row(R.drawable.ic_mic, "Floating bubble", sub = if (overlay) "On: tap it from any app" else "Tap, then switch on “Allow display over other apps”",
+            chip = chip(overlay), dismiss = false) {
+            if (!overlay) runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+        })
+        val battery = getSystemService(android.os.PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+        sheet.add(Sheet.Row(R.drawable.ic_shield, "Stay reachable in the background", sub = "So your laptop can send files any time",
+            chip = chip(battery), dismiss = false) {
+            if (!battery) runCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+            }
+        })
+        if (Build.VERSION.SDK_INT >= 33) {
+            sheet.add(Sheet.Row(R.drawable.ic_document, "Add the “Send copied text” tile", sub = "Copy anything, pull down, tap: it's on your laptop",
+                dismiss = false) { addClipTile() })
+        }
+    }
+
+    /** Android 13+: one tap adds our Quick Settings tile. */
+    private fun addClipTile() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val sbm = getSystemService(android.app.StatusBarManager::class.java)
+        sbm.requestAddTileService(android.content.ComponentName(this, ClipTile::class.java), "Send copied text",
+            android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stat), mainExecutor) { result ->
+            Log.i(TAG, "setup: add tile → $result")
+        }
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_SETUP) {
+            // Back to the list: what's left (the bubble, background) is a tap each.
+            setupSheet?.let { fillSetup(it); if (!it.isShowing) it.show() }
+            ReceiveService.refresh(this)
+        }
         if (requestCode == REQUEST_MEDIA) foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
         if (requestCode == REQUEST_MIC) { ReceiveService.refresh(this); foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }
     }
@@ -1248,6 +1329,7 @@ class MainActivity : Activity() {
         private const val REQUEST_MEDIA = 4
         private const val REQUEST_SEND_TREE = 6
         private const val REQUEST_MIC = 7
+        private const val REQUEST_SETUP = 8
         private val PAIR_TICK = Any()
     }
 }
