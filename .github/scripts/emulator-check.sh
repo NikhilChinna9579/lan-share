@@ -64,7 +64,7 @@ PY
   A shell input swipe $xy $xy 900
 }
 tap_text() {
-  shade_closed
+  [ -n "$KEEP_SHADE" ] || shade_closed   # (except when tapping inside the notification shade)
   A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
   A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1 || return 1
   local xy
@@ -184,7 +184,7 @@ mark; api /api/clip/copy '{"text":"Meeting at 5pm ✓"}' >/dev/null
 expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars, offered' "copied on the laptop: a notification with a Copy button (the default)"
 shade_open() { A shell cmd statusbar expand-notifications; sleep 2; }
 shade_open; shot 06b-clip-notification
-until_ok 10 "tap_text Copy"; sleep 1; shade_closed
+until_ok 10 "KEEP_SHADE=1 tap_text Copy"; sleep 1; shade_closed
 expect 10 'clipboard: copied what came from DESKTOP-NIKHIL' "…Copy puts it on the phone's clipboard"
 run_hook ask_clip_off
 mark; api /api/clip/copy '{"text":"Straight in 9921"}' >/dev/null
