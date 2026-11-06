@@ -135,6 +135,7 @@ class MainActivity : Activity() {
         Hub.listen(onHub)
         presence.start()
         Clip.screenShown()
+        ReceiveService.refresh(this) // also brings back its notification if it was swiped away
         render()
     }
 

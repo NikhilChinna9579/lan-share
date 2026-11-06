@@ -232,6 +232,30 @@ api /api/clip | grep -q 'Tile copy 5150' && fail "the laptop's clipboard was rep
 A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Send copied text' \
   && pass "LAN Share's notification has a “Send copied text” button" || fail "“Send copied text” on the notification"
 A shell cmd statusbar remove-tile $PKG/.ClipTile >/dev/null 2>&1; shade_closed
+# LAN Share's notification ("Send copied text") can be swiped away on Android 14+; the next
+# unlock brings it back.
+note_up() { A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Ready to receive files'; }
+A shell cmd statusbar expand-notifications; sleep 2
+A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1
+XY=$(python3 - "$WORK/ui.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+for n in ET.parse(sys.argv[1]).iter("node"):
+    if (n.get("text") or "") == "Ready to receive files":
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds"))); print(x1 + 10, (y1 + y2) // 2); break
+PY
+)
+[ -n "$XY" ] && A shell input swipe $XY $(( ${XY% *} + 700 )) ${XY#* } 250
+sleep 2; shade_closed
+if note_up; then
+  log "note  couldn't swipe the notification away here; unlock check skipped"
+else
+  pass "LAN Share's notification can be swiped away"
+  mark; A shell input keyevent KEYCODE_SLEEP; sleep 2; A shell input keyevent KEYCODE_WAKEUP; sleep 1
+  A shell wm dismiss-keyguard; sleep 3
+  expect 15 'ready note: shown again \(unlock\)' "…and it's back after the next unlock"
+  note_up && A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Send copied text' \
+    && pass "…with its “Send copied text” button" || fail "notification back with Send copied text"
+fi
 bail_if_crashed "clipboard"
 
 # ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off

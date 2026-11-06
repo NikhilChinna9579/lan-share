@@ -15,7 +15,7 @@ import android.util.Log
 class ClipTile : TileService() {
     override fun onStartListening() {
         qsTile?.apply {
-            state = Tile.STATE_INACTIVE
+            state = Tile.STATE_ACTIVE // highlighted: a button that's always ready (inactive looked disabled)
             label = "Send copied text"
             if (Build.VERSION.SDK_INT >= 29) subtitle = "to your laptop"
             updateTile()
