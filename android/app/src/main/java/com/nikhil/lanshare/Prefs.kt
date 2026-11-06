@@ -7,6 +7,10 @@ object Prefs {
     private fun p(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     /** May paired laptops list and get files from the shared folders? On unless turned off. */
+    /** The first-start "Set up LAN Share" screen has been shown (once). */
+    fun setupShown(ctx: Context) = p(ctx).getBoolean("setup_shown", false)
+    fun setSetupShown(ctx: Context) = p(ctx).edit().putBoolean("setup_shown", true).apply()
+
     fun allowBrowse(ctx: Context) = p(ctx).getBoolean("browse", true)
     fun setAllowBrowse(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("browse", on).apply()
 

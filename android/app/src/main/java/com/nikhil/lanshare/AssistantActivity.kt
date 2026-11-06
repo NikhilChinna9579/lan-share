@@ -149,7 +149,8 @@ class AssistantActivity : Activity() {
         if (hasFocus && pendingClipSend) { // (Android lets us read the clipboard only now)
             pendingClipSend = false
             Log.i(TAG, "assistant: send copied text (tile)")
-            sendClipboard(Commands.Command.Send(Commands.What.CLIPBOARD, null, null, null))
+            // Copied here, sent on request: the laptop shows its "Copied on …" box with Copy.
+            sendClipboard(Commands.Command.Send(Commands.What.CLIPBOARD, null, null, null), offer = true)
             return
         }
         if (hasFocus) Clip.autoSend(this, { DeviceStore.all(this).filter { presence.status(it.id).state == Presence.State.ONLINE } }) { d, t ->
@@ -328,11 +329,11 @@ class AssistantActivity : Activity() {
 
     // ------------------------------------------------------------------ shared clipboard
 
-    private fun sendClipboard(c: Commands.Command.Send, chosen: Device? = null) {
+    private fun sendClipboard(c: Commands.Command.Send, chosen: Device? = null, offer: Boolean = false) {
         val devices = DeviceStore.all(this)
         val d = chosen ?: c.device?.let { n -> devices.firstOrNull { it.name == n } } ?: devices.singleOrNull()
         if (d == null) {
-            ask("Send what's copied to which laptop?", "", devices.map { dev -> Option(dev.name, R.drawable.ic_laptop) { sendClipboard(c, dev) } })
+            ask("Send what's copied to which laptop?", "", devices.map { dev -> Option(dev.name, R.drawable.ic_laptop) { sendClipboard(c, dev, offer) } })
             return
         }
         val (text, why) = Clip.read(this) // we're on screen, so Android lets us read it
@@ -340,10 +341,10 @@ class AssistantActivity : Activity() {
         Log.i(TAG, "assistant: plan send clipboard (${text.length} chars) to ${d.name}")
         say("Copying to ${d.name}…", Clip.oneLine(text))
         show(emptyList(), false)
-        Actions.sendClip(this, d, text, { explain(it, d) }) { err ->
+        Actions.sendClip(this, d, text, { explain(it, d) }, auto = offer) { err ->
             ui {
                 if (err == null) {
-                    say("Copied to ${d.name} ✓", "Paste it there with Ctrl+V.")
+                    say("Sent to ${d.name} ✓", if (offer) "Click Copy in the box on ${d.name}." else "Paste it there with Ctrl+V.")
                     main.postDelayed({ if (!isFinishing) finish() }, 2500)
                 } else say("Couldn't send it", err)
             }

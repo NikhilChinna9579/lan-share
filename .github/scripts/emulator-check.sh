@@ -124,10 +124,13 @@ bail_if_crashed() { if crashed; then fail "app crashed during: $1"; A logcat -d 
 A logcat -b crash -c
 mark; night no; app
 expect 30 'screen: unpaired' "first launch shows pairing"
+expect 10 'setup: shown' "first start asks for everything it can use, in one place"
+shot 00-setup
 expect 5 'version: [0-9.]+ · built [0-9]+ [A-Z][a-z]+ 20[0-9]{2}' "home screen shows which build this is (build time)"
 shot 01-unpaired-light
 bail_if_crashed "first launch"
-night yes; app; shot 01-unpaired-dark; night no
+night yes; mark; app; shot 01-unpaired-dark; night no
+seen 'setup: shown' && fail "the setup screen came back on the next start" || pass "…only on the first start"
 # The bubble before pairing: allowing "Display over other apps" alone brings it up (it
 # used to need a paired laptop, because it lives in the receiving service).
 mark; A shell appops set $PKG SYSTEM_ALERT_WINDOW allow; app 3
@@ -224,7 +227,10 @@ until_ok 10 "A shell settings get secure sysui_qs_tiles | grep -q ClipTile" || l
 A shell cmd statusbar expand-settings; sleep 3
 mark; A shell cmd statusbar click-tile $PKG/.ClipTile 2>&1 | head -2
 expect 15 'assistant: send copied text \(tile\)' "Quick Settings tile opens and reads what's copied"
-until_ok 15 "api /api/clip | grep -q 'Tile copy 5150'" && pass "…and one tap puts it on the laptop's clipboard" || fail "tile copy reached the laptop"
+until_ok 15 "get /api/state | grep -q 'Tile copy 5150'" && pass "…and the laptop shows it in its Copy box" || fail "tile copy offered on the laptop"
+api /api/clip | grep -q 'Tile copy 5150' && fail "the laptop's clipboard was replaced without Copy" || pass "…its clipboard untouched until Copy"
+A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Send copied text' \
+  && pass "LAN Share's notification has a “Send copied text” button" || fail "“Send copied text” on the notification"
 A shell cmd statusbar remove-tile $PKG/.ClipTile >/dev/null 2>&1; shade_closed
 bail_if_crashed "clipboard"
 
