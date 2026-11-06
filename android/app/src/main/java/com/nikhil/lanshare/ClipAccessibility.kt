@@ -31,12 +31,21 @@ class ClipAccessibility : AccessibilityService() {
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         e ?: return
-        val pkg = e.packageName?.toString() ?: return
+        val pkg = e.packageName?.toString() // none for "windows changed"
         if (pkg == packageName) return
+        if (debug && (pkg == null || pkg == "com.android.systemui") &&
+            (e.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || e.source?.viewIdResourceName?.contains("clipboard", true) == true))
+            Log.d("LanShare", "copy detector: event ${AccessibilityEvent.eventTypeToString(e.eventType)} pkg=$pkg class=${e.className} id=${e.source?.viewIdResourceName}")
         when (e.eventType) {
-            // The system's "Copied" preview (Android 13+) appearing.
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED ->
-                if (pkg == "com.android.systemui" && clipboardOverlayShown()) ClipWatcher.copied(this, "copied preview")
+            // The system's "Copied" preview (Android 13+) appearing: a new window, or SystemUI's
+            // clipboard views showing up / changing.
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED ->
+                if (e.windowChanges and AccessibilityEvent.WINDOWS_CHANGE_ADDED != 0 && clipboardOverlayShown()) ClipWatcher.copied(this, "copied preview")
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ->
+                if (pkg == "com.android.systemui" &&
+                    (e.source?.viewIdResourceName?.contains("clipboard", true) == true ||
+                        e.className?.contains("clipboard", true) == true || clipboardOverlayShown()))
+                    ClipWatcher.copied(this, "copied preview")
             // A "Copied" toast (older Android, and many apps).
             AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED ->
                 if (e.parcelableData == null && e.text.any { it?.toString()?.contains("copied", ignoreCase = true) == true })
@@ -51,16 +60,23 @@ class ClipAccessibility : AccessibilityService() {
     }
 
     /** Is SystemUI's clipboard preview on screen? (Its views are named clipboard_….) */
+    private val debug by lazy { applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 }
+    @Volatile private var lastOverlayCheck = 0L
+
     private fun clipboardOverlayShown(): Boolean = runCatching {
+        val now = System.currentTimeMillis()
+        if (now - lastOverlayCheck < 300) return false // content changes come in bursts
+        lastOverlayCheck = now
         windows.any { w ->
+            if (debug) Log.d("LanShare", "copy detector: window '${w.title}' type=${w.type}")
             w.title?.toString()?.contains("clipboard", ignoreCase = true) == true ||
-                w.root?.let { hasClipboardView(it, 0) } == true
+                w.root?.let { it.packageName == "com.android.systemui" && hasClipboardView(it, 0) } == true
         }
     }.getOrDefault(false)
 
     private fun hasClipboardView(n: AccessibilityNodeInfo, depth: Int): Boolean {
         if (n.viewIdResourceName?.contains("clipboard", ignoreCase = true) == true) return true
-        if (depth > 3) return false
+        if (depth > 5) return false
         for (i in 0 until n.childCount) n.getChild(i)?.let { if (hasClipboardView(it, depth + 1)) return true }
         return false
     }
