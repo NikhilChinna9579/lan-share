@@ -140,7 +140,7 @@ func startTray(a *app) {
 		}
 	}()
 	if <-ready {
-		log.Printf("tray: icon added")
+		log.Printf("tray: running")
 	} else {
 		log.Printf("tray: not available")
 	}
@@ -166,9 +166,13 @@ func (t *tray) create() bool {
 	t.created = uint32(r)
 	t.icon = loadAppIcon()
 	registerSendHotkey(t.hwnd)
-	ok := t.add()
+	if !t.add() {
+		// No taskbar yet (starting at sign-in before Explorer, or a machine without one):
+		// keep going; "TaskbarCreated" adds the icon when the taskbar appears.
+		log.Printf("tray: icon not added yet (no taskbar)")
+	}
 	t.bubbleUpdate()
-	return ok
+	return true // the message loop must run for the bubble and the shortcuts either way
 }
 
 func (t *tray) data() *notifyIconData {

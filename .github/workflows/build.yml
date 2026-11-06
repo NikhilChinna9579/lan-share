@@ -113,7 +113,9 @@ jobs:
       - name: Show the app's log
         if: always()
         shell: bash
-        run: cat e2e-out-win/lanshare.log e2e-out-win/laptop.log 2>/dev/null | tail -60 || true
+        run: |
+          grep -hiE "tray|bubble|hotkey|voice" e2e-out-win/laptop.log e2e-out-win/lanshare.log 2>/dev/null | head -40 || true
+          cat e2e-out-win/lanshare.log e2e-out-win/laptop.log 2>/dev/null | tail -60 || true
 
   android:
     name: Android app (Kotlin)
