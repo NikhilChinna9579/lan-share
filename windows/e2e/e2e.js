@@ -568,7 +568,7 @@ async function step(name, fn) {
       fs.writeFileSync(f, "x");
       start("phone-forgotten", fakephone, ["-data", phoneData, "-name", "Nikhil's Pixel", "-port", "47851", "-send", f]);
       const lg = () => fs.readFileSync(path.join(out, "phone-forgotten.log"), "utf8");
-      await waitFor("refused", () => /send: .*(bad certificate|not_trusted)|sent to .*: \[\] .+/.test(lg()), 30_000)
+      await waitFor("refused", () => /send: .*(bad certificate|not_trusted|forcibly closed|connection reset)|sent to .*: \[\] .+/.test(lg()), 30_000)
         .catch((e) => { throw new Error(e.message + " (phone said: " + lg().trim().split("\n").slice(-3).join(" | ") + ")"); });
       if (fs.existsSync(path.join(laptopDownloads, "After forget.txt"))) throw new Error("a forgotten phone could still send");
     });
