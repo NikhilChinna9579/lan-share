@@ -435,6 +435,16 @@ mark; hook demo.txt wake_off; app 3
 expect 15 'wake word: off' "turning it off stops listening"
 bail_if_crashed "wake word"
 
+# ---------------------------------------------------------------- 8c2. Browse button on the main screen
+mark; app 3
+if until_ok 10 "tap_logged 'Browse DESKTOP-NIKHIL'"; then
+  expect 10 'sheet: Browse DESKTOP-NIKHIL' "Browse on the main screen opens the laptop's folders"
+  shot 08c2-browse
+  A shell input keyevent KEYCODE_BACK
+else
+  fail "Browse button on the main screen"
+fi
+
 # ---------------------------------------------------------------- 8d. the phone's own "Get files" screen
 # Tap a file = open it (fetched into a temporary cache); again = straight from the cache;
 # tick + Get = saved in Downloads (copied from the cache, no second download).

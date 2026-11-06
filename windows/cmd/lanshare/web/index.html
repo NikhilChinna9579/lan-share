@@ -404,6 +404,7 @@ function render() {
       return `<div class="card dev"><div class="avatar">${icon("phone")}<span class="dot ${dot}"></span></div>
         <div class="grow"><div class="t1">${esc(d.name)}</div><div class="t2">${line}</div></div>
         <button class="btn tonal" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}>${icon("send")}Send</button>
+        <button class="btn tonal" data-act="browse" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Browse ${esc(d.name)}'s files">${icon("folder")}Browse</button>
         <button class="iconbtn" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"} title="Get files from ${esc(d.name)}">${icon("down")}</button>
         <button class="iconbtn" data-act="devmenu" data-id="${d.id}" title="More">${icon("more")}</button></div>`;
     }).join("") + `<div class="center"><button class="btn ghost" data-act="pair">${icon("add")}Pair another phone</button></div>`;
@@ -495,7 +496,7 @@ function renderModalNow() {
     if (!d) return closeModal();
     el.innerHTML = head(esc(d.name)) + `<div class="rows">
       <button class="r" data-act="send" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("send")}</span><span class="grow">Send files</span></button>
-      <button class="r" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("down")}</span><span class="grow">Get files from this phone</span></button>
+      <button class="r" data-act="get" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("down")}</span><span class="grow">Browse this phone's files</span></button>
       <button class="r" data-act="pastefrom" data-id="${d.id}" ${d.status === "online" ? "" : "disabled"}><span class="ic">${icon("clip")}</span><span class="grow"><div>Paste from this phone</div><div class="t2">Gets what's copied there (LAN Share must be open on the phone)</div></span></button>
       <button class="r" data-act="forget" data-id="${d.id}"><span class="ic" style="background:var(--bad-soft);color:var(--bad)">${icon("close")}</span><span class="grow">Forget this phone</span></button></div>`;
   }
@@ -563,7 +564,7 @@ async function openFolder(folder, path) {
 function renderSend(el) {
   const m = modal;
   const total = m.files.reduce((s, f) => s + f.size, 0);
-  let h = head(m.get ? "Get files from a phone" : "Send files");
+  let h = head(m.get ? `Browse ${esc((S.devices.find((d) => d.id === m.device) || {name: "a phone"}).name)}` : "Send files");
   if (!m.get) {
     // Loose files one per row; a whole folder as one row ("Trip · 12 files").
     const groups = [];
@@ -663,7 +664,7 @@ document.addEventListener("click", async (ev) => {
       case "dismiss": return api("/api/dismiss", {id: t.dataset.id});
       case "pair": await api("/api/pair", {}); return openModal({kind: "pair"});
       case "send": return openSend({device: t.dataset.id});
-      case "get": return openSend({device: t.dataset.id, get: true});
+      case "get": case "browse": return openSend({device: t.dataset.id, get: true});
       case "gethit": {
         const f = m.hits[+t.dataset.i];
         await api("/api/fetch", {device: m.device, folder: f.folder, folderLabel: labelOf(f.folder), path: f.path, names: [f.name]});

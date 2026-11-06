@@ -389,6 +389,12 @@ class MainActivity : Activity() {
             alpha = if (isEnabled) 1f else 0.4f
             setOnClickListener { getFiles(d) }
         }
+        row.findViewById<View>(R.id.browse).apply { // its folders: tap a file to open, tick to save
+            isEnabled = s.state == Presence.State.ONLINE
+            alpha = if (isEnabled) 1f else 0.4f
+            setOnClickListener { getFiles(d) }
+            reportPos(this, "Browse ${d.name}")
+        }
         val tap = {
             when (s.state) {
                 Presence.State.ONLINE -> sendWhat(d)
@@ -988,7 +994,7 @@ class MainActivity : Activity() {
 
     /** Browse a laptop's shared folders, tick files, and copy them to this phone's Downloads. */
     private fun getFiles(d: Device) {
-        val sheet = Sheet(this, "Get from ${d.name}", "Copies to this phone's Downloads")
+        val sheet = Sheet(this, "Browse ${d.name}", "Tap a file to open it; tick files to save them in Downloads")
         if (Clip.enabled(this)) sheet.add(Sheet.Row(R.drawable.ic_document, "Paste from ${d.name}", sub = "What's copied there, onto this phone's clipboard") { pasteFrom(d) })
         sheet.message("Asking ${d.name} for its folders…")
         sheet.show()
