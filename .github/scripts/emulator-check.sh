@@ -64,7 +64,7 @@ PY
   A shell input swipe $xy $xy 900
 }
 tap_text() {
-  [ -n "$KEEP_SHADE" ] || shade_closed   # (except when tapping inside the notification shade)
+  [ -n "${KEEP_SHADE:-}" ] || shade_closed   # (except when tapping inside the notification shade)
   A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
   A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1 || return 1
   local xy
