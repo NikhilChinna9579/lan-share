@@ -51,7 +51,8 @@ object Clip {
         java.io.File(dir, "$id.from").writeText(from)
         Log.i("LanShare", "clipboard from $from: ${text.length} chars, offered (Copy button)")
         val nm = app.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CH_ASK, "Copied on your other devices", NotificationManager.IMPORTANCE_DEFAULT).apply {
+        // High: it pops up for a moment with its Copy button showing (silently).
+        nm.createNotificationChannel(NotificationChannel(CH_ASK, "Copied on your other devices", NotificationManager.IMPORTANCE_HIGH).apply {
             setSound(null, null); enableVibration(false)
         })
         val copy = android.app.PendingIntent.getBroadcast(app, id,
@@ -65,6 +66,8 @@ object Clip {
             .setContentIntent(copy) // tapping it copies too
             .addAction(Notification.Action.Builder(null, "Copy", copy).build())
             .setAutoCancel(true)
+            .setGroup("clipboard") // its own: never folded in with "Ready to receive", hiding Copy
+            .setCategory(Notification.CATEGORY_STATUS)
             .setTimeoutAfter(10 * 60_000)
             .build()
         runCatching { nm.notify(NOTE_ASK, n) }
