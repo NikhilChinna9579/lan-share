@@ -56,6 +56,25 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
         view.findViewById<View>(R.id.sheetScroll).layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
     }
 
+    private val debug = activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+    private val logged = HashMap<String, String>()
+    init {
+        // The sheet sits at the bottom and changes height as rows come, so positions are only
+        // final after layout: log each tick box's place whenever it moves.
+        if (debug) view.viewTreeObserver.addOnGlobalLayoutListener {
+            for (i in 0 until list.childCount) {
+                val c = list.getChildAt(i).findViewById<View>(R.id.rowChevron) ?: continue
+                val label = c.tag as? String ?: continue
+                val xy = IntArray(2).also { c.getLocationOnScreen(it) }
+                val at = "${xy[0] + c.width / 2},${xy[1] + c.height / 2}"
+                if (c.width > 0 && logged[label] != at) {
+                    logged[label] = at
+                    android.util.Log.d("LanShare", "ui: tick $label at $at")
+                }
+            }
+        }
+    }
+
     fun setSubtitle(s: String?) {
         subtitleView.text = s
         subtitleView.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
@@ -63,7 +82,7 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
 
     private fun dpx(v: Int) = (v * activity.resources.displayMetrics.density).toInt()
 
-    fun clear(): Sheet { list.removeAllViews(); return this }
+    fun clear(): Sheet { list.removeAllViews(); logged.clear(); return this }
 
     /** Rebuilds the rows without jumping back to the top (e.g. after ticking a file). */
     fun redraw(build: () -> Unit) {
@@ -102,10 +121,7 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
                 setOnClickListener { act() }
                 setPadding(dpx(10), dpx(10), dpx(10), dpx(10))
                 layoutParams = layoutParams.apply { width = dpx(44); height = dpx(44) }
-                if (activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) post {
-                    val xy = IntArray(2).also { getLocationOnScreen(it) } // tests tap it here
-                    android.util.Log.d("LanShare", "ui: tick ${row.label} at ${xy[0] + width / 2},${xy[1] + height / 2}")
-                }
+                tag = row.label // debug builds log where it is once the sheet has settled (tests tap it there)
             }
         }
         r.findViewById<View>(R.id.rowRemove).apply {
