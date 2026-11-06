@@ -68,6 +68,8 @@ async function step(name, fn) {
 
 (async () => {
   const laptopData = path.join(work, "laptop");
+  const openLog = path.join(work, "opened.txt"); // what the laptop "opened" (instead of launching apps)
+  process.env.LANSHARE_OPEN_LOG = openLog;
   const phoneData = path.join(work, "phone");
   const pairFile = path.join(work, "pair.json");
   const phoneInbox = path.join(phoneData, "inbox", "Download");
@@ -225,7 +227,7 @@ async function step(name, fn) {
       fs.writeFileSync(src, crypto.randomBytes(300_000));
       await page.locator('.dev [data-act="get"]').first().click();
       await page.locator('[data-act="root"]', { hasText: "Documents" }).click();
-      await page.locator('[data-act="pickfile"]', { hasText: name }).click();
+      await page.locator(".r", { hasText: name }).locator('[data-act="pickfile"]').click();
       await page.locator('[data-act="dofetch"]', { hasText: /Get Meeting notes\.txt .* into Downloads/ }).waitFor();
       await settle(); await page.screenshot({ path: path.join(out, "w08d-get-sheet.png") });
       await page.locator('[data-act="dofetch"]').click();
@@ -233,6 +235,43 @@ async function step(name, fn) {
       const got = path.join(laptopDownloads, name);
       await waitFor("fetched file on the laptop", () => fs.existsSync(got) && fs.statSync(got).size === 300_000);
       await settle(); await page.screenshot({ path: path.join(out, "w08e-got.png") });
+    });
+
+    await step("tap a phone's file to open it; again from the cache; Save a copy", async () => {
+      const name = "Holiday photo.jpg";
+      const src = path.join(phoneData, "inbox", "Documents", name);
+      fs.writeFileSync(src, crypto.randomBytes(450_000));
+      fs.rmSync(openLog, { force: true });
+      fs.rmSync(path.join(laptopDownloads, name), { force: true });
+      await page.locator('.dev [data-act="get"]').first().click();
+      await page.locator('[data-act="root"]', { hasText: "Documents" }).click();
+      await page.locator('[data-act="openfile"]', { hasText: name }).click();
+      const opened = () => fs.existsSync(openLog) ? fs.readFileSync(openLog, "utf8").trim().split("\n").filter(Boolean) : [];
+      await waitFor("the file opened", () => opened().length === 1, 15_000);
+      const cached = opened()[0];
+      if (!cached.startsWith(path.join(laptopData, "cache"))) throw new Error("opened outside the cache: " + cached);
+      if (!fs.readFileSync(cached).equals(fs.readFileSync(src))) throw new Error("opened file differs from the phone's");
+      if (fs.existsSync(path.join(laptopDownloads, name))) throw new Error("opening also saved it in Downloads");
+      // Again: straight from the cache, no second fetch.
+      await page.locator('[data-act="openfile"]', { hasText: name }).click();
+      await waitFor("opened again", () => opened().length === 2);
+      const lg = fs.readFileSync(path.join(out, "laptop.log"), "utf8");
+      if ((lg.match(/open: fetched Holiday photo\.jpg/g) || []).length !== 1 || !/open: Holiday photo\.jpg from the cache/.test(lg))
+        throw new Error("the second open fetched it again");
+      // Changed on the phone: fetched afresh.
+      await page.locator('[data-act="close"]').first().click();
+      fs.writeFileSync(src, crypto.randomBytes(460_000));
+      await page.locator('.dev [data-act="get"]').first().click();
+      await page.locator('[data-act="root"]', { hasText: "Documents" }).click();
+      await page.locator('[data-act="openfile"]', { hasText: name }).click();
+      await waitFor("changed file opened", () => opened().length === 3 && fs.statSync(opened()[2]).size === 460_000, 15_000);
+      if (opened()[2] !== cached) throw new Error("changed file landed elsewhere: " + opened()[2]);
+      await page.locator('[data-act="close"]').first().click();
+      await page.locator(".tr", { hasText: `Opened ${name}` }).first().waitFor();
+      await settle(); await page.screenshot({ path: path.join(out, "w08e2-opened.png") });
+      await page.locator(".tr", { hasText: `Opened ${name}` }).first().locator('[data-act="savecopy"]').click();
+      const saved = path.join(laptopDownloads, name);
+      await waitFor("saved copy in Downloads", () => fs.existsSync(saved) && fs.statSync(saved).size === 460_000);
     });
 
     await step("search the phone's folders and get a file from a subfolder", async () => {

@@ -105,7 +105,10 @@
   .rows { border:1px solid var(--line); border-radius:16px; overflow:hidden; }
   .r { display:flex; align-items:center; gap:12px; padding:11px 14px; width:100%; text-align:left; }
   .r + .r { border-top:1px solid var(--line); }
-  button.r:hover:not(:disabled) { background:var(--bg); }
+  button.r:hover:not(:disabled), .r.tap:hover { background:var(--bg); }
+  .r.tap { cursor:pointer; }
+  button.check { cursor:pointer; padding:0; background:none; position:relative; }
+  button.check::after { content:""; position:absolute; inset:-11px; } /* easier to hit */
   .r .ic { width:36px; height:36px; border-radius:50%; background:var(--brand-soft); color:var(--on-brand-soft); display:grid; place-items:center; flex:none; }
   .r .ic svg { width:19px; height:19px; }
   .r.sel { background:var(--brand-soft); }
@@ -125,7 +128,7 @@
   .newdir { display:flex; gap:8px; padding:8px 12px; }
   .newdir input, .field { flex:1; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font:inherit; }
   .check { width:22px; height:22px; border-radius:7px; border:2px solid var(--line); display:grid; place-items:center; flex:none; }
-  .check.on { background:var(--brand); border-color:var(--brand); color:#fff; }
+  button.check.on, .check.on { background:var(--brand); border-color:var(--brand); color:#fff; }
   .check .i { width:16px; height:16px; }
   .devpick { display:flex; flex-wrap:wrap; gap:8px; }
   .devpick button { display:flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px; border:1px solid var(--line); }
@@ -312,15 +315,19 @@ function render() {
     let cls = "", ic = inbound ? "down" : "up", title, sub, actions = "";
     if (t.state === "running") {
       const el = Date.now() - new Date(t.started).getTime();
-      title = `${inbound ? "Receiving" : "Sending"} ${esc(t.name || "…")}`;
+      title = `${t.folder === "Opening" ? "Opening" : inbound ? "Receiving" : "Sending"} ${esc(t.name || "…")}`;
       sub = `${dirWord} ${esc(t.device)}` + (many ? ` · file ${t.index} of ${t.count}` : "") +
         ` · ${size(t.sent)} of ${size(t.total)}` + (t.speed ? ` · ${size(t.speed)}/s` : "") + ` · ${dur(el)}`;
       actions = `<button class="btn ghost" data-act="cancel" data-id="${t.id}">Cancel</button>`;
     } else if (t.state === "done") {
       cls = "ok"; ic = "check";
-      title = `${inbound ? "Received" : "Sent"} ${t.files > 1 ? t.files + " files" : esc(t.name)}`;
+      title = t.opened ? `Opened ${esc(t.name)}` : `${inbound ? "Received" : "Sent"} ${t.files > 1 ? t.files + " files" : esc(t.name)}`;
       sub = `${dirWord} ${esc(t.device)}` + (t.folder ? ` · in ${esc(t.folder)}` : "") +
         ` · ${size(t.total)} in ${dur(t.elapsed)}` + (t.speed ? ` · ${size(t.speed)}/s` : "");
+      if (t.opened) {
+        sub = `From ${esc(t.device)} · ${size(t.total)} · kept for a day, not in your folders`;
+        actions = `<button class="btn ghost" data-act="reopen" data-id="${t.id}">Open</button><button class="btn tonal" data-act="savecopy" data-id="${t.id}">Save a copy</button>`;
+      }
     } else {
       cls = "bad"; ic = t.state === "cancelled" ? "close" : "error";
       title = t.state === "cancelled" ? `Cancelled ${inbound ? "receiving from" : "sending to"} ${esc(t.device)}`
@@ -538,7 +545,7 @@ function renderSend(el) {
       else if (m.hits) {
         h += m.hits.length ? `<div class="rows" style="margin-bottom:10px">` + m.hits.slice(0, 50).map((f, i) => `<div class="r"><span class="ic">${icon("file")}</span>
             <span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${esc([labelOf(f.folder), ...(f.path ? f.path.split("/") : [])].join(" / "))} · ${size(f.size)} · ${ago(new Date(f.modified).toISOString())}</div></span>
-            <button class="btn small" data-act="gethit" data-i="${i}">${icon("down")}Get</button></div>`).join("") + `</div>`
+            <button class="btn ghost small" data-act="openhit" data-i="${i}">Open</button><button class="btn small" data-act="gethit" data-i="${i}">${icon("down")}Get</button></div>`).join("") + `</div>`
           : `<p class="small">Nothing called “${esc(m.q)}” in the shared folders.</p>`;
       }
     }
@@ -558,9 +565,9 @@ function renderSend(el) {
           <span class="grow">${esc(d)}</span><svg class="i chev" viewBox="0 0 24 24"><use href="#i-chev"/></svg></button>`).join("")
           : m.get ? "" : `<div class="r"><span class="grow small">No subfolders here.</span></div>`) + `</div>`;
       if (m.get && m.dirs !== null) {
-        h += m.list.length ? `<div class="rows" style="margin-top:8px">` + m.list.map((f, i) => `<button class="r" data-act="pickfile" data-i="${i}">
-            <span class="ic">${icon("file")}</span><span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${size(f.size)} · ${ago(new Date(f.modified).toISOString())}</div></span>
-            <span class="check ${m.pick.has(f.name) ? "on" : ""}">${m.pick.has(f.name) ? icon("check") : ""}</span></button>`).join("") + `</div>`
+        h += m.list.length ? `<div class="rows" style="margin-top:8px">` + m.list.map((f, i) => `<div class="r tap" data-act="openfile" data-i="${i}" title="Open ${esc(f.name)}">
+            <span class="ic">${icon("file")}</span><span class="grow"><div class="t1">${esc(f.name)}</div><div class="t2">${size(f.size)} · ${ago(new Date(f.modified).toISOString())} · click to open</div></span>
+            <button class="check ${m.pick.has(f.name) ? "on" : ""}" data-act="pickfile" data-i="${i}" title="Choose to save">${m.pick.has(f.name) ? icon("check") : ""}</button></div>`).join("") + `</div>`
           : `<p class="small">No files here${m.dirs.length ? "; open a folder above" : ""}.</p>`;
       }
     }
@@ -642,6 +649,14 @@ document.addEventListener("click", async (ev) => {
         m.newdir = false;
         return openFolder(m.folder, [...m.path, r.name]);
       }
+      case "openfile": case "openhit": {
+        const f = act === "openhit" ? m.hits[+t.dataset.i] : m.list[+t.dataset.i];
+        const folder = act === "openhit" ? f.folder : m.folder.key, path = act === "openhit" ? f.path : m.path.join("/");
+        const r = await api("/api/openremote", {device: m.device, folder, path, name: f.name, size: f.size, modified: f.modified});
+        return toast(r.cached ? `Opened ${f.name}` : `Opening ${f.name}…`);
+      }
+      case "reopen": return api("/api/reopen", {id: t.dataset.id});
+      case "savecopy": { const r = await api("/api/savecopy", {id: t.dataset.id}); return toast("Saved a copy in your default folder."); }
       case "pickfile": { const n = m.list[+t.dataset.i].name; m.pick.has(n) ? m.pick.delete(n) : m.pick.add(n); return renderModal(); }
       case "dofetch": {
         await api("/api/fetch", {device: m.device, folder: m.folder.key, folderLabel: m.folder.label, path: m.path.join("/"), names: [...m.pick]});

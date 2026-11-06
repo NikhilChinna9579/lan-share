@@ -74,6 +74,13 @@
             android:name=".Approvals$Answer"
             android:exported="false" />
 
+        <!-- Hands files opened from another device (in our cache) to the viewer app, read-only. -->
+        <provider
+            android:name=".CacheProvider"
+            android:authorities="${applicationId}.cache"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

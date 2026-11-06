@@ -96,6 +96,70 @@ object Actions {
         }
     }
 
+    // ------------------------------------------------------------- tap to open
+
+    /**
+     * Opens a laptop's file on this phone: from the cache if it's there and unchanged,
+     * otherwise fetched into the cache first (with the usual progress card and Cancel).
+     * [ready] gets the file to show, or null if it couldn't be fetched.
+     */
+    fun openRemote(ctx: Context, d: Device, folder: Client.Folder, path: String, f: Client.RemoteFile,
+                   explain: (Throwable) -> String, ready: (java.io.File?) -> Unit) {
+        val app = ctx.applicationContext
+        val dest = RemoteCache.fileFor(app, d, folder.key, path, f.name)
+        if (RemoteCache.fresh(dest, f.size, f.modified)) {
+            Log.i(TAG, "open: ${f.name} from the cache")
+            dest.setLastModified(System.currentTimeMillis()) // recently used: kept longer
+            ready(dest)
+            return
+        }
+        val id = UUID.randomUUID().toString()
+        Hub.transfer(id, true, d.name) {
+            it.total = f.size; it.name = f.name; it.count = 1; it.index = 1; it.folder = "Opening"
+            it.cancel = { it.cancelled = true }
+        }
+        worker.execute {
+            val r = runCatching {
+                Client.fetchToFile(app, DeviceStore.get(app, d.id) ?: d, deviceName(app), folder.key, path, f.name, dest,
+                    onConnected = { conn ->
+                        Hub.transfer(id, true, d.name) { t -> t.cancel = { t.cancelled = true; conn.abort() } }
+                        if (Hub.get(id)?.cancelled == true) conn.abort()
+                    }) { got, all, _ -> Hub.transfer(id, true, d.name) { t -> t.sent = got; t.total = all } }
+                RemoteCache.remember(dest, f.modified)
+            }
+            Log.i(TAG, "open: ${f.name} from ${d.name}: " + r.map { "fetched ${dest.length()} bytes" }.getOrElse { "failed: $it" })
+            r.onSuccess {
+                Hub.transfer(id, true, d.name) { t -> t.state = Hub.State.DONE; t.sent = t.total; t.files = 1; t.cancel = null; t.folder = "Opened" }
+            }.onFailure { e ->
+                val cancelled = Hub.get(id)?.cancelled == true
+                Hub.transfer(id, true, d.name) { t ->
+                    t.state = if (cancelled) Hub.State.CANCELLED else Hub.State.ERROR
+                    t.message = if (cancelled) "Cancelled." else explain(e); t.cancel = null
+                }
+            }
+            android.os.Handler(android.os.Looper.getMainLooper()).post { ready(if (r.isSuccess) dest else null) }
+            worker.execute { RemoteCache.clean(app) }
+        }
+    }
+
+    /** "Save" for a file already opened (in the cache): copied here, no second download. */
+    fun saveFromCache(ctx: Context, d: Device, src: java.io.File, name: String) {
+        val app = ctx.applicationContext
+        worker.execute {
+            val r = runCatching {
+                val inc = SharedFolders.create(app, SharedFolders.DEFAULT, "", name)
+                try {
+                    src.inputStream().use { it.copyTo(inc.out) }
+                    inc.finish() to inc.savedIn
+                } catch (e: Exception) { inc.discard(); throw e }
+            }
+            Log.i(TAG, "save from cache: $name " + r.map { "ok" }.getOrElse { "failed: $it" })
+            r.onSuccess { (saved, where) ->
+                Hub.add("received", "Got $saved from ${d.name}", "${formatSize(src.length())} · in $where (already opened, no download)")
+            }.onFailure { Hub.add("error", "Couldn't save $name", it.message ?: "") }
+        }
+    }
+
     // ------------------------------------------------------------- shared clipboard
 
     /** Sends text to the laptop's clipboard. [done] gets null on success, or what went wrong. */

@@ -25,7 +25,9 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
     class Row(
         val icon: Int, val label: String, val sub: String? = null, val chip: String? = null,
         val trail: Trail = Trail.NONE, val enabled: Boolean = true, val dismiss: Boolean = true,
-        val onRemove: (() -> Unit)? = null, val onPick: () -> Unit,
+        val onRemove: (() -> Unit)? = null,
+        val onTrail: (() -> Unit)? = null, // its own action for the tick (the row itself does something else)
+        val onPick: () -> Unit,
     )
 
     private val dialog = Dialog(activity, R.style.Theme_LanShare_Sheet)
@@ -58,6 +60,8 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
         subtitleView.text = s
         subtitleView.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
     }
+
+    private fun dpx(v: Int) = (v * activity.resources.displayMetrics.density).toInt()
 
     fun clear(): Sheet { list.removeAllViews(); return this }
 
@@ -93,6 +97,15 @@ class Sheet(private val activity: Activity, private val title: String, subtitle:
                 setImageResource(if (on) R.drawable.ic_check_circle else R.drawable.ic_circle_outline)
                 imageTintList = android.content.res.ColorStateList.valueOf(activity.getColor(if (on) R.color.primary else R.color.ink_muted))
                 contentDescription = if (on) "Chosen" else "Not chosen"
+            }
+            row.onTrail?.let { act ->
+                setOnClickListener { act() }
+                setPadding(dpx(10), dpx(10), dpx(10), dpx(10))
+                layoutParams = layoutParams.apply { width = dpx(44); height = dpx(44) }
+                if (activity.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) post {
+                    val xy = IntArray(2).also { getLocationOnScreen(it) } // tests tap it here
+                    android.util.Log.d("LanShare", "ui: tick ${row.label} at ${xy[0] + width / 2},${xy[1] + height / 2}")
+                }
             }
         }
         r.findViewById<View>(R.id.rowRemove).apply {

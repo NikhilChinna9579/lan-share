@@ -166,6 +166,42 @@ object Client {
             }
         }
 
+    /**
+     * Gets one file from the laptop into [dest] (the app's cache, for "tap to open").
+     * Written as dest.part and renamed only once its checksum matched.
+     */
+    fun fetchToFile(ctx: Context, device: Device, myName: String, folderKey: String, path: String, name: String, dest: File,
+                    onConnected: (PeerConnection) -> Unit = {}, progress: (Long, Long, Int) -> Unit) {
+        dest.parentFile?.mkdirs()
+        val tmp = File(dest.parentFile, dest.name + ".part")
+        try {
+            PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
+                onConnected(conn)
+                val tid = UUID.randomUUID().toString()
+                conn.send(JSONObject().put("type", "fetch_request").put("transfer_id", tid)
+                    .put("folder", folderKey).put("path", path).put("files", JSONArray(listOf(name))))
+                val offer = conn.receive()
+                when (offer.optString("type")) {
+                    "file_offer" -> {}
+                    "error" -> throw IllegalStateException(
+                        if (offer.optString("code") == "not_found") "That file is no longer on ${device.name}." else "${device.name} said: ${offer.optString("message", offer.optString("code"))}")
+                    else -> throw ProtocolException("unexpected reply: ${offer.optString("type")}")
+                }
+                val size = offer.getJSONArray("files").getJSONObject(0).optLong("size", -1)
+                if (size < 0) throw ProtocolException("bad size")
+                conn.send(JSONObject().put("type", "file_accept").put("transfer_id", tid))
+                Transfer.receive(conn, listOf(dest.name), listOf(size), {
+                    SharedFolders.Incoming(Uri.fromFile(tmp), SharedFolders.mimeOf(dest.name), tmp.outputStream(), "cache", ctx, pending = false)
+                }, progress)
+                conn.send(JSONObject().put("type", "transfer_done").put("transfer_id", tid).put("saved", JSONArray(listOf(dest.name))))
+            }
+            dest.delete()
+            if (!tmp.renameTo(dest)) throw java.io.IOException("couldn't keep the file")
+        } finally {
+            tmp.delete()
+        }
+    }
+
     /** Makes a subfolder on the laptop (the "New folder" button); returns its name. */
     fun mkdir(device: Device, myName: String, folderKey: String, path: String, name: String): String =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->

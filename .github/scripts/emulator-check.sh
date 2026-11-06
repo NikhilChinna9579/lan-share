@@ -381,14 +381,27 @@ expect 15 'wake word: off' "turning it off stops listening"
 bail_if_crashed "wake word"
 
 # ---------------------------------------------------------------- 8d. the phone's own "Get files" screen
+# Tap a file = open it (fetched into a temporary cache); again = straight from the cache;
+# tick + Get = saved in Downloads (copied from the cache, no second download).
 head -c 50000 /dev/urandom > "$HOME/Documents/Plan.pdf"
-mark; hook demo.txt get_sheet; app 4
-if until_ok 30 "seen 'row: Documents'"; then
-  until_ok 10 "tap_text Documents"
-  until_ok 20 "seen 'row: Plan.pdf'" && until_ok 10 "tap_text Plan.pdf"
-  until_ok 10 "tap_text 'Get Plan.pdf'"
-  until_ok 30 "[ \"\$(phone_size '/sdcard/Download/Plan.pdf')\" = 50000 ]" \
-    && pass "phone browsed the laptop, ticked a file and got it" || fail "phone's Get files screen"
+get_docs() { mark; hook demo.txt get_sheet; app 4
+  until_ok 30 "seen 'row: Documents'" && until_ok 10 "tap_text Documents" && until_ok 20 "seen 'row: Plan.pdf'"; }
+if get_docs; then
+  until_ok 10 "tap_text Plan.pdf"
+  expect 30 'open: Plan.pdf from .*: fetched 50000 bytes' "tap a laptop's file: fetched to open it"
+  expect 15 'open: (showing|no app for) Plan.pdf' "…and handed to a viewer (or a clear note if there's none)"
+  [ "$(phone_size '/sdcard/Download/Plan.pdf')" = 50000 ] && fail "opening also saved it in Downloads" || pass "opening doesn't fill Downloads"
+  if get_docs; then
+    until_ok 10 "tap_text Plan.pdf"
+    expect 20 'open: Plan.pdf from the cache' "opening it again needs no download"
+  else fail "Get files screen again"; fi
+  if get_docs; then
+    until_ok 10 "tap_logged 'tick Plan.pdf'"
+    until_ok 10 "tap_text 'Get Plan.pdf'"
+    until_ok 30 "[ \"\$(phone_size '/sdcard/Download/Plan.pdf')\" = 50000 ]" \
+      && pass "phone browsed the laptop, ticked a file and got it" || fail "phone's Get files screen"
+    expect 10 'save from cache: Plan.pdf ok' "…copied from the opened file, not downloaded again"
+  else fail "Get files screen for ticking"; fi
 else
   fail "Get files screen lists the laptop's folders"
 fi

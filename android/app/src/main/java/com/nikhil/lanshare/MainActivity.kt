@@ -2,6 +2,7 @@ package com.nikhil.lanshare
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
@@ -73,6 +74,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         edgeToEdge()
+        worker.execute { RemoteCache.clean(this) }
 
         receiveDot = findViewById(R.id.receiveDot)
         receiveStatus = findViewById(R.id.receiveStatus)
@@ -248,7 +250,7 @@ class MainActivity : Activity() {
                 }
                 Hub.State.RUNNING -> {
                     badge(icon, if (t.inbound) R.drawable.ic_download else R.drawable.ic_upload, R.color.primary_container, R.color.on_primary_container)
-                    title.text = (if (t.inbound) "Receiving " else "Sending ") + t.name.ifEmpty { "…" }
+                    title.text = (if (t.folder == "Opening") "Opening " else if (t.inbound) "Receiving " else "Sending ") + t.name.ifEmpty { "…" }
                     val elapsed = System.currentTimeMillis() - t.started
                     sub.text = "$dir ${t.device}" + (if (t.count > 1) " · file ${t.index} of ${t.count}" else "") +
                         " · ${formatSize(t.sent)} of ${formatSize(t.total)}" +
@@ -265,8 +267,9 @@ class MainActivity : Activity() {
                 Hub.State.DONE -> {
                     badge(icon, R.drawable.ic_check_circle, R.color.success_container, R.color.online)
                     val what = if (t.files > 1) "${t.files} files" else t.name
-                    title.text = (if (t.inbound) "Received " else "Sent ") + what
-                    sub.text = "$dir ${t.device} · in ${t.folder} · ${formatSize(t.total)} in ${formatDuration(t.elapsed)} · ${formatSize(t.speed)}/s"
+                    title.text = (if (t.folder == "Opened") "Opened " else if (t.inbound) "Received " else "Sent ") + what
+                    sub.text = if (t.folder == "Opened") "$dir ${t.device} · ${formatSize(t.total)} · kept for a day, not in your folders · tick it to save"
+                        else "$dir ${t.device} · in ${t.folder} · ${formatSize(t.total)} in ${formatDuration(t.elapsed)} · ${formatSize(t.speed)}/s"
                     bar.visibility = View.GONE
                 }
                 Hub.State.ERROR, Hub.State.CANCELLED -> {
@@ -1011,17 +1014,19 @@ class MainActivity : Activity() {
                         }
                         sorted.forEach { f ->
                             val on = f.name in picked
-                            sheet.add(Sheet.Row(fileIcon(f.name), f.name, sub = "${formatSize(f.size)} · ${ago(f.modified)}",
-                                trail = if (on) Sheet.Trail.CHECK_ON else Sheet.Trail.CHECK_OFF, dismiss = false) {
-                                if (!picked.remove(f.name)) picked += f.name
-                                draw()
+                            val cached = RemoteCache.fresh(RemoteCache.fileFor(this, d, folder.key, path.joinToString("/"), f.name), f.size, f.modified)
+                            sheet.add(Sheet.Row(fileIcon(f.name), f.name, sub = "${formatSize(f.size)} · ${ago(f.modified)} · tap to open",
+                                chip = if (cached) "Opened" else null,
+                                trail = if (on) Sheet.Trail.CHECK_ON else Sheet.Trail.CHECK_OFF, dismiss = false,
+                                onTrail = { if (!picked.remove(f.name)) picked += f.name; draw() }) {
+                                openRemote(d, folder, path.joinToString("/"), f) { if (sheet.isShowing) draw() }
                             })
                         }
                     }
                     val chosen = sorted.filter { it.name in picked }
                     if (chosen.isEmpty()) sheet.primary(if (files.isEmpty()) null else "Tick the files to get", enabled = false)
                     else sheet.primary("Get ${chosen.singleOrNull()?.name ?: plural(chosen.size, "file")} · ${formatSize(chosen.sumOf { it.size })}") {
-                        fetch(d, folder, path.joinToString("/"), chosen.map { it.name }, chosen.sumOf { it.size })
+                        fetch(d, folder, path.joinToString("/"), chosen.map { it.name }, chosen.sumOf { it.size }, chosen)
                     }
                 }
                 draw()
@@ -1029,8 +1034,34 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun fetch(d: Device, folder: Client.Folder, path: String, names: List<String>, total: Long) =
-        Actions.fetch(this, d, folder, path, names, total) { friendly(it, d) }
+    /** Ticked files: saved here. Any already opened (cached, unchanged) are copied, not downloaded again. */
+    private fun fetch(d: Device, folder: Client.Folder, path: String, names: List<String>, total: Long, files: List<Client.RemoteFile> = emptyList()) {
+        val cached = files.filter { RemoteCache.fresh(RemoteCache.fileFor(this, d, folder.key, path, it.name), it.size, it.modified) }
+        cached.forEach { Actions.saveFromCache(this, d, RemoteCache.fileFor(this, d, folder.key, path, it.name), it.name) }
+        val rest = names - cached.map { it.name }.toSet()
+        if (rest.isNotEmpty()) Actions.fetch(this, d, folder, path, rest, total - cached.sumOf { it.size }) { friendly(it, d) }
+    }
+
+    /** Tap on a laptop's file: shown straight away (fetched into a temporary cache first if needed). */
+    private fun openRemote(d: Device, folder: Client.Folder, path: String, f: Client.RemoteFile, after: () -> Unit = {}) {
+        Actions.openRemote(this, d, folder, path, f, { friendly(it, d) }) { file ->
+            after()
+            if (file != null) view(file, f.name)
+        }
+    }
+
+    /** Opens a cached file in whatever app shows that kind of file. */
+    private fun view(file: java.io.File, name: String) {
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(RemoteCache.uriFor(this, file), SharedFolders.mimeOf(name))
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(i)
+            Log.i(TAG, "open: showing $name")
+        } catch (e: ActivityNotFoundException) {
+            Log.i(TAG, "open: no app for $name")
+            Hub.add("error", "No app here opens $name", "Tick it and choose Get to save it in Downloads instead.")
+        }
+    }
 
     /** Turns exceptions into something a person can act on. */
     private fun friendly(e: Throwable, d: Device?): String {

@@ -120,6 +120,7 @@ type transfer struct {
 	Message  string    `json:"message,omitempty"`
 	Folder   string    `json:"folder,omitempty"`
 	CanRetry bool      `json:"canRetry"`
+	Opened   string    `json:"opened,omitempty"` // tap to open: the copy in the cache
 	Started  time.Time `json:"started"`
 	Updated  time.Time `json:"updated"`
 
@@ -179,6 +180,7 @@ func newApp(dataDir, logPath string) (*app, error) {
 		json.Unmarshal(data, &a.activity) // history from earlier runs
 	}
 	os.RemoveAll(filepath.Join(dataDir, "outbox")) // leftovers of dropped files from earlier runs
+	go a.cleanCache()
 	tok := make([]byte, 24)
 	rand.Read(tok)
 	a.token = hex.EncodeToString(tok)

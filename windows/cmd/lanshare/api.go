@@ -274,6 +274,31 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return map[string]string{"id": a.fetch(in.Device, in.Folder, in.FolderLabel, in.Path, in.Names)}, nil
 	})
+	h("/api/openremote", func(r *http.Request) (any, error) { // tap a phone's file
+		var in struct {
+			Device, Folder, Path, Name string
+			Size, Modified             int64
+		}
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		return a.openRemote(in.Device, in.Folder, in.Path, in.Name, in.Size, in.Modified)
+	})
+	h("/api/reopen", func(r *http.Request) (any, error) {
+		var in struct{ ID string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		return nil, a.reopen(in.ID)
+	})
+	h("/api/savecopy", func(r *http.Request) (any, error) {
+		var in struct{ ID string }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		p, err := a.saveCopy(in.ID)
+		return map[string]string{"path": p}, err
+	})
 	h("/api/approve", func(r *http.Request) (any, error) {
 		var in struct {
 			ID string
