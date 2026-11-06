@@ -28,7 +28,8 @@ const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1).padS
 
 function start(name, cmd, args) {
   const p = spawn(cmd, args, { env: { ...process.env, HOME: home, XDG_CONFIG_HOME: path.join(home, ".config") } });
-  const f = fs.createWriteStream(path.join(out, name + ".log"));
+  // Opened right away (not lazily), so the log exists even if the process says nothing.
+  const f = fs.createWriteStream(null, { fd: fs.openSync(path.join(out, name + ".log"), "w") });
   p.stdout.pipe(f);
   p.stderr.pipe(f);
   procs.push(p);
@@ -565,8 +566,10 @@ async function step(name, fn) {
       // The forgotten phone is refused now.
       const f = path.join(work, "After forget.txt");
       fs.writeFileSync(f, "x");
-      procs.push(start("phone-forgotten", fakephone, ["-data", phoneData, "-name", "Nikhil's Pixel", "-port", "47851", "-send", f]));
-      await waitFor("refused", () => /send: .*(bad certificate|not_trusted)|sent to .*: \[\] .+/.test(fs.readFileSync(path.join(out, "phone-forgotten.log"), "utf8")), 15_000);
+      start("phone-forgotten", fakephone, ["-data", phoneData, "-name", "Nikhil's Pixel", "-port", "47851", "-send", f]);
+      const lg = () => fs.readFileSync(path.join(out, "phone-forgotten.log"), "utf8");
+      await waitFor("refused", () => /send: .*(bad certificate|not_trusted)|sent to .*: \[\] .+/.test(lg()), 30_000)
+        .catch((e) => { throw new Error(e.message + " (phone said: " + lg().trim().split("\n").slice(-3).join(" | ") + ")"); });
       if (fs.existsSync(path.join(laptopDownloads, "After forget.txt"))) throw new Error("a forgotten phone could still send");
     });
 
