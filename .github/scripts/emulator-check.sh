@@ -219,7 +219,10 @@ seen 'clipboard auto:' && fail "the same copy was sent again" || pass "…only o
 # Quick Settings tile "Send copied text": copy in another app, tap the tile.
 run_hook "copy_only:Tile copy 5150"; sleep 2
 A shell cmd statusbar add-tile $PKG/.ClipTile >/dev/null 2>&1
-mark; A shell cmd statusbar click-tile $PKG/.ClipTile >/dev/null 2>&1
+until_ok 10 "A shell settings get secure sysui_qs_tiles | grep -q ClipTile" || log "note  the tile wasn't added: $(A shell settings get secure sysui_qs_tiles)"
+# Android delivers a tile's tap only while Quick Settings is open (as when a person taps it).
+A shell cmd statusbar expand-settings; sleep 3
+mark; A shell cmd statusbar click-tile $PKG/.ClipTile 2>&1 | head -2
 expect 15 'assistant: send copied text \(tile\)' "Quick Settings tile opens and reads what's copied"
 until_ok 15 "api /api/clip | grep -q 'Tile copy 5150'" && pass "…and one tap puts it on the laptop's clipboard" || fail "tile copy reached the laptop"
 A shell cmd statusbar remove-tile $PKG/.ClipTile >/dev/null 2>&1; shade_closed
@@ -314,7 +317,7 @@ bail_if_crashed "assistant send"
 mark; hook demo.txt assistant_ask; app 3
 expect 20 'assistant: asking: Which folder on DESKTOP-NIKHIL' "assistant asks which folder"
 shot 15-assistant-asks
-until_ok 10 "tap_text input" && A shell input text documents && A shell input keyevent 66
+until_ok 10 "tap_text Documents"   # the folder choices it offers (typing here depends on the emulator's keyboard)
 expect 15 'assistant: plan send Voice memo 2.m4a to DESKTOP-NIKHIL in Documents' "assistant took the answer"
 until_ok 30 "[ \"\$(stat -c %s '$HOME/Documents/Voice memo 2.m4a' 2>/dev/null)\" = 300000 ]" \
   && pass "follow-up send arrived in Documents" || fail "follow-up send arrived in Documents"
