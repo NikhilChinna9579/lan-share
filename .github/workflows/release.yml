@@ -1,0 +1,43 @@
+name: release
+
+# Publishes the latest tested builds (the "builds" branch, written only when every test
+# suite passed) as a GitHub Release with lanshare.apk and lanshare.exe attached.
+# Run it from the Actions tab: "release" → Run workflow → version (e.g. v0.6.0).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag, e.g. v0.6.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: builds
+          path: builds
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          cat > notes.md <<'NOTES'
+          LAN Share for Android (lanshare.apk) and Windows (lanshare.exe).
+
+          **Install:** on the phone open `lanshare.apk` (allow installing unknown apps if asked); on the laptop run `lanshare.exe` (if SmartScreen shows, More info → Run anyway). Then pair the phone with the laptop.
+
+          - Send and get files both ways on the same Wi-Fi; tap a file on the other device to open it
+          - Shared clipboard: copy on one device, a Copy button appears on the other (phone: Quick Settings tile "Send copied text")
+          - Floating bubble on the laptop: send files, paste from the phone, drop files on it
+          - Each app shows when it was built, at the bottom of its main screen
+          NOTES
+          sed -i 's/^          //' notes.md
+          echo >> notes.md; cat builds/BUILD.txt >> notes.md 2>/dev/null || true
+          gh release create "$VERSION" builds/lanshare.apk builds/lanshare.exe \
+            --repo "$REPO" --target main --title "LAN Share $VERSION" --notes-file notes.md
