@@ -105,7 +105,6 @@ class MainActivity : Activity() {
         pairAnother.setOnClickListener { pairMenu() }
         findViewById<View>(R.id.pairPhoneButton).setOnClickListener { pairMenu() }
         findViewById<View>(R.id.settingsButton).setOnClickListener { showSharedFolders(firstTime = false) }
-        findViewById<View>(R.id.assistantButton).setOnClickListener { startActivity(Intent(this, AssistantActivity::class.java)) }
 
         Hub.init(this)
         presence = Presence(this, myName) { renderDevices() }
@@ -121,8 +120,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
-        Bubble.bringBack(this) // opening LAN Share brings a dismissed bubble back (and covers "back from granting the permission")
-        main.postDelayed({ Bubble.update(this); foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }, 800) // some phones report the permission late
+        main.postDelayed({ foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }, 800) // some phones report a permission late
         if (!hooksRan) {
             hooksRan = true
             ui { runTestHooks() } // after the screen is fully up
@@ -670,53 +668,11 @@ class MainActivity : Activity() {
             })
             val auto = Clip.autoEnabled(this)
             sheet.add(Sheet.Row(R.drawable.ic_document, "Send what I copy here automatically",
-                sub = if (auto) "When LAN Share or the bubble opens (Android allows it only then)" else "Off: send it from the bubble or the Send sheet",
+                sub = if (auto) "When LAN Share opens (Android allows it only then)" else "Off: send it with “Send copied text” or the Send sheet",
                 trail = if (auto) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
                 Clip.setAutoEnabled(this, !auto); fillSharedFolders(sheet)
             })
         }
-        // The floating bubble opens the assistant from any app.
-        val bubbleWanted = Bubble.enabled(this)
-        val bubbleBlocked = bubbleWanted && (!android.provider.Settings.canDrawOverlays(this) || Bubble.problem == Bubble.BLOCKED)
-        sheet.add(Sheet.Row(R.drawable.ic_mic, "Floating assistant bubble", sub = Bubble.status(this),
-            chip = if (bubbleBlocked) "Fix" else null,
-            trail = if (bubbleWanted) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
-            when {
-                bubbleWanted && !android.provider.Settings.canDrawOverlays(this) ->
-                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
-                bubbleWanted && Bubble.problem == Bubble.BLOCKED -> {
-                    // The phone maker's own permission lives in the app's info page.
-                    Bubble.problem = null
-                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
-                }
-                bubbleWanted -> Bubble.setEnabled(this, false)
-                else -> {
-                    Bubble.setEnabled(this, true)
-                    if (!android.provider.Settings.canDrawOverlays(this)) {
-                        showCard(Kind.WORKING, "Allow “Display over other apps”", "Turn it on for LAN Share, then come back.")
-                        runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
-                    }
-                    ReceiveService.start(this)
-                }
-            }
-            main.postDelayed({ if (sheet.isShowing) fillSharedFolders(sheet) }, 900) // shows whether it really appeared
-        })
-        // "Hey Jarvis" opens the assistant without touching the phone.
-        val wake = WakeWord.canListen(this)
-        sheet.add(Sheet.Row(R.drawable.ic_mic, "Say “Hey Jarvis” to open the assistant",
-            sub = if (wake) "On: listening on this phone only; uses some battery" else "Hands-free; works offline, nothing leaves the phone",
-            trail = if (wake) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
-            if (wake) {
-                WakeWord.setEnabled(this, false)
-            } else {
-                WakeWord.setEnabled(this, true)
-                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MIC)
-                }
-            }
-            ReceiveService.refresh(this)
-            fillSharedFolders(sheet)
-        })
         // Photos, videos and music in the standard folders are only visible with permission.
         val media = SharedFolders.canReadMedia(this)
         sheet.add(Sheet.Row(R.drawable.ic_image, "Let laptops see photos, videos and music",
@@ -733,7 +689,7 @@ class MainActivity : Activity() {
                     p.inputStream.bufferedReader().readText().also { p.waitFor() }
                 }.getOrElse { "Couldn't read the log: $it" }
                 val head = "LAN Share ${packageManager.getPackageInfo(packageName, 0).versionName} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · ${Build.MANUFACTURER} ${Build.MODEL}\n" +
-                    "bubble: on=${Bubble.enabled(this)} allowed=${android.provider.Settings.canDrawOverlays(this)} problem=${Bubble.problem} service=${ReceiveService.running}\n\n"
+                    "service=${ReceiveService.running}\n\n"
                 ui {
                     startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
                         .putExtra(Intent.EXTRA_SUBJECT, "LAN Share diagnostic log").putExtra(Intent.EXTRA_TEXT, head + log.takeLast(200_000)), "Share the log"))
@@ -854,7 +810,6 @@ class MainActivity : Activity() {
             else -> return
         }
         setIntent(Intent()) // don't resend after rotation
-        Hub.shared(uris) // "this file" for the assistant, for a few minutes
         // "Share → Nikhil PC" (a Direct Share target): that device, no need to ask which.
         val direct = DirectShare.deviceFor(this, intent)
         if (direct != null) Log.i(TAG, "direct share to ${direct.name}: ${uris.size} file(s)")
@@ -1121,9 +1076,8 @@ class MainActivity : Activity() {
 
     /**
      * First start, the usual Android way: its own permission dialogs one after another
-     * (notifications, photos/videos/music, microphone), then "always run in the
-     * background?", then "add the Send copied text tile?" (Android 13+), then one
-     * question about the bubble (Android has no dialog for that one: a settings screen).
+     * (notifications, photos/videos/music), then "always run in the
+     * background?", then "add the Send copied text tile?" (Android 13+).
      * Each is asked once; all stay in Settings ⚙.
      */
     private fun showSetup() {
@@ -1137,7 +1091,7 @@ class MainActivity : Activity() {
     /** Android's own permission questions (the rest are settings screens). */
     private fun runtimePermissions(): List<String> =
         (if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()) +
-            SharedFolders.mediaPermissions().toList() + Manifest.permission.RECORD_AUDIO
+            SharedFolders.mediaPermissions().toList()
 
     private fun setupBattery() {
         ReceiveService.refresh(this)
@@ -1151,24 +1105,12 @@ class MainActivity : Activity() {
     }
 
     private fun setupTile() {
-        if (Build.VERSION.SDK_INT < 33) return setupBubble()
+        if (Build.VERSION.SDK_INT < 33) return setupDone()
         Log.i(TAG, "setup: tile")
-        runCatching { addClipTile { main.post { setupBubble() } } }.onFailure { setupBubble() }
+        runCatching { addClipTile { main.post { setupDone() } } }.onFailure { setupDone() }
     }
 
-    private fun setupBubble() {
-        if (android.provider.Settings.canDrawOverlays(this)) { Log.i(TAG, "setup: done"); return }
-        Log.i(TAG, "setup: bubble question")
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Floating bubble?")
-            .setMessage("A small bubble that opens LAN Share from any app. On the next screen, allow “Display over other apps”.")
-            .setPositiveButton("Allow") { _, _ ->
-                runCatching { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
-            }
-            .setNegativeButton("Not now", null)
-            .setOnDismissListener { Log.i(TAG, "setup: done") }
-            .show()
-    }
+    private fun setupDone() { Log.i(TAG, "setup: done") }
 
     /** Android 13+: Android's own "add this tile?" question. */
     private fun addClipTile(then: () -> Unit = {}) {
@@ -1185,7 +1127,6 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_SETUP) setupBattery() // next question
         if (requestCode == REQUEST_MEDIA) foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) }
-        if (requestCode == REQUEST_MIC) { ReceiveService.refresh(this); foldersSheet?.let { if (it.isShowing) fillSharedFolders(it) } }
     }
 
     private fun askNotificationPermission() {
@@ -1220,17 +1161,6 @@ class MainActivity : Activity() {
                 moveTaskToBack(true)
                 return@let
             }
-            if (mode.startsWith("ask:")) { // a sentence with nothing shared first
-                Hub.shared(emptyList())
-                startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", mode.removePrefix("ask:")))
-                return@let
-            }
-            if (mode.startsWith("say:")) { // a file just shared + a sentence for the assistant
-                val f = File(cacheDir, "Shared note.txt").apply { writeBytes(ByteArray(200_000) { (it % 13).toByte() }) }
-                Hub.shared(listOf(Uri.fromFile(f)))
-                startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", mode.removePrefix("say:")))
-                return@let
-            }
             if (mode.startsWith("rename:")) {
                 Prefs.setName(this, mode.removePrefix("rename:"))
                 ReceiveService.restart(this)
@@ -1255,15 +1185,6 @@ class MainActivity : Activity() {
                     ReceiveService.start(this)
                     Log.i(TAG, "phone pairing open: code $code id ${Identity.fingerprint}")
                 }
-                "wake_on" -> { WakeWord.setEnabled(this, true); ReceiveService.refresh(this) }
-                "wake_off" -> { WakeWord.setEnabled(this, false); ReceiveService.refresh(this) }
-                "wake_files" -> worker.execute {
-                    // Recordings pushed by the test: each one's best "hey jarvis" score.
-                    File(filesDir, "wav").listFiles()?.sortedBy { it.name }?.forEach { f ->
-                        val score = runCatching { WakeWord.scoreWav(this, f.readBytes()) }.getOrElse { -1f }
-                        Log.i(TAG, "wake test: ${f.name} score ${"%.3f".format(score)}")
-                    }
-                }
                 "send_clip" -> { // copies a text here, then sends what's copied (the real read path)
                     getSystemService(android.content.ClipboardManager::class.java)
                         .setPrimaryClip(android.content.ClipData.newPlainText("test", "Hello from the phone 📱"))
@@ -1282,21 +1203,12 @@ class MainActivity : Activity() {
                     }
                     chooseDest(d, items)
                 }
-                "bubble" -> { Bubble.setEnabled(this, true); ReceiveService.start(this) }
-                "assistant" -> {
-                    // "this file" = a file just shared into LAN Share; then the sentence a person would say.
-                    val f = File(cacheDir, "Voice note.m4a")
-                    f.outputStream().use { out -> val b = ByteArray(1 shl 16); repeat(8) { java.util.Random(it.toLong()).nextBytes(b); out.write(b) } }
-                    Hub.shared(listOf(Uri.fromFile(f)))
-                    startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", "send this to my laptop in downloads"))
+                "send_to_phone" -> { // a file to the other paired phone, into its Downloads
+                    val p = DeviceStore.all(this).first { it.name == "Test phone" }
+                    val f = File(cacheDir, "Shared note.txt").apply { writeBytes(ByteArray(200_000) { (it % 13).toByte() }) }
+                    Actions.send(this, p, Client.Folder("downloads", "Downloads"), "", "Downloads",
+                        listOf(Client.Outgoing(f.name, f.length()) { f.inputStream() })) { friendly(it, p) }
                 }
-                "assistant_ask" -> {
-                    val f = File(cacheDir, "Voice memo 2.m4a")
-                    f.outputStream().use { out -> out.write(ByteArray(300_000) { (it % 251).toByte() }) }
-                    Hub.shared(listOf(Uri.fromFile(f)))
-                    startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", "send this to my laptop"))
-                }
-                "assistant_get" -> startActivity(Intent(this, AssistantActivity::class.java).putExtra("say", "get meeting notes from my laptop"))
                 "send_big" -> {
                     val f = File(cacheDir, "Big video.mp4")
                     f.outputStream().use { out -> val b = ByteArray(1 shl 20); repeat(200) { out.write(b) } } // 200 MB
@@ -1325,7 +1237,6 @@ class MainActivity : Activity() {
         private const val REQUEST_TREE = 3
         private const val REQUEST_MEDIA = 4
         private const val REQUEST_SEND_TREE = 6
-        private const val REQUEST_MIC = 7
         private const val REQUEST_SETUP = 8
         private const val REQUEST_SETUP_BATTERY = 9
         private val PAIR_TICK = Any()

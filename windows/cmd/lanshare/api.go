@@ -284,22 +284,6 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return a.openRemote(in.Device, in.Folder, in.Path, in.Name, in.Size, in.Modified)
 	})
-	h("/api/assistant/say", func(r *http.Request) (any, error) { // typed in the window (and tests)
-		var in struct{ Text string }
-		if err := readJSON(r, &in); err != nil || strings.TrimSpace(in.Text) == "" {
-			return nil, fmt.Errorf("type a command")
-		}
-		go a.assistHeard(in.Text)
-		return nil, nil
-	})
-	h("/api/assistant/cancel", func(*http.Request) (any, error) { a.assistCancel(); return nil, nil })
-	h("/api/assistant/pick", func(r *http.Request) (any, error) {
-		var in struct{ I int }
-		if err := readJSON(r, &in); err != nil {
-			return nil, err
-		}
-		return nil, a.assistPick(in.I)
-	})
 	h("/api/history/clear", func(*http.Request) (any, error) { // "Clear" on Recent activity
 		a.clearHistory()
 		return nil, nil
@@ -336,7 +320,6 @@ func serveAPI(a *app, ln net.Listener) {
 			Browse  *bool
 			Clip    *bool
 			ClipNow *bool
-			Bubble  *bool
 		}
 		if err := readJSON(r, &in); err != nil {
 			return nil, err
@@ -358,10 +341,6 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		if in.ClipNow != nil {
 			a.settings.ClipNow = *in.ClipNow
-		}
-		if in.Bubble != nil {
-			a.settings.NoBubble = !*in.Bubble
-			defer bubbleRefresh(a)
 		}
 		a.mu.Unlock()
 		a.hub.changed()

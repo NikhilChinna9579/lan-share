@@ -138,12 +138,6 @@ object Hub {
     fun inboundFrom(id: String, host: String) { inboundHost[id] = host }
     fun inboundHost(id: String): String? = inboundHost[id]
 
-    // The file(s) last shared into LAN Share: what "this" means to the assistant for a while.
-    @Volatile private var lastShared: Pair<Long, List<android.net.Uri>>? = null
-    fun shared(uris: List<android.net.Uri>) { lastShared = System.currentTimeMillis() to uris }
-    fun recentlyShared(): List<android.net.Uri>? =
-        lastShared?.takeIf { System.currentTimeMillis() - it.first < 10 * 60_000 }?.second?.takeIf { it.isNotEmpty() }
-
     private val failStreak = ConcurrentHashMap<String, Int>()
 
     fun reached(id: String, ok: Boolean) {

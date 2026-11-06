@@ -9,10 +9,6 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <!-- The floating assistant bubble and its microphone. -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Staying ready to receive from laptops while the app is closed. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -59,17 +55,6 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
-
-        <!-- The assistant, opened from the floating bubble. Its own task, so it shows over
-             whatever app is open and doesn't bring the home screen along. -->
-        <activity
-            android:name=".AssistantActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:launchMode="singleTask"
-            android:taskAffinity=".assistant"
-            android:theme="@style/Theme.LanShare.Assistant"
-            android:windowSoftInputMode="adjustResize" />
 
         <!-- "Send copied text": a small window with the devices and a Send button each. -->
         <activity
@@ -121,7 +106,7 @@
         <service
             android:name=".ReceiveService"
             android:exported="false"
-            android:foregroundServiceType="specialUse|microphone">
+            android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Receives files sent by the user's own paired computers on the local Wi-Fi network" />

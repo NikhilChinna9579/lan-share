@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * Android (10+) lets an app read the clipboard only while it's on screen, but write it any
  * time. So: text from a laptop goes straight onto this phone's clipboard; going the other
- * way takes one tap in LAN Share (bubble/assistant, Send sheet, or Share → LAN Share).
+ * way takes one tap (Send copied text: tile or notification; Send sheet; Share → LAN Share).
  */
 object Clip {
     private const val CH = "clipboard"
@@ -171,7 +171,7 @@ object Clip {
 
     // ------------------------------------------------------------- sent on its own
 
-    /** "Send what I copy here when LAN Share or the bubble opens" (on unless turned off). */
+    /** "Send what I copy here when LAN Share opens" (on unless turned off). */
     fun autoEnabled(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("clip_auto", true)
     fun setAutoEnabled(ctx: Context, on: Boolean) =
         ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("clip_auto", on).apply()
@@ -186,8 +186,8 @@ object Clip {
 
     /**
      * Android lets an app read the clipboard only while it's on screen. So the moment
-     * LAN Share (or the bubble's assistant) comes up, something newly copied on this
-     * phone goes to the laptops that are online: copy → tap the bubble → paste there.
+     * LAN Share comes up, something newly copied on this phone goes to the laptops
+     * that are online.
      * Only text copied in the last 10 minutes, not marked private, and not what just
      * came from a laptop.
      */

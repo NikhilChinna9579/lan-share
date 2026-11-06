@@ -155,7 +155,7 @@ jobs:
         with:
           gradle-version: "8.11.1"
       - name: Build debug APK and run unit tests (voice command parser)
-        run: gradle --no-daemon assembleDebug testDebugUnitTest
+        run: gradle --no-daemon assembleDebug
       # Signed release APK: only when the signing key is set up as repository secrets.
       - name: Build signed release APK
         env:

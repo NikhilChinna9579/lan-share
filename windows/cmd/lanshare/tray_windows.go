@@ -63,7 +63,6 @@ const (
 	menuOpen    = 1
 	menuPair    = 2
 	menuQuit    = 3
-	menuBubble  = 5
 	hwndMessage = ^uintptr(2) // HWND_MESSAGE (-3): a window that is never shown
 )
 
@@ -146,7 +145,7 @@ func startTray(a *app) {
 }
 
 func (t *tray) create() bool {
-	if pSetThreadDpiAwareness.Find() == nil { // sharp bubble on high-DPI screens
+	if pSetThreadDpiAwareness.Find() == nil { // sharp Copied box on high-DPI screens
 		pSetThreadDpiAwareness.Call(^uintptr(3)) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (-4)
 	}
 	inst, _, _ := pGetModuleHandle.Call(0)
@@ -169,8 +168,7 @@ func (t *tray) create() bool {
 		// keep going; "TaskbarCreated" adds the icon when the taskbar appears.
 		log.Printf("tray: icon not added yet (no taskbar)")
 	}
-	t.bubbleUpdate()
-	return true // the message loop must run for the bubble and the shortcuts either way
+	return true // the message loop must run (notifications, the Copied box) either way
 }
 
 func (t *tray) data() *notifyIconData {
@@ -247,18 +245,8 @@ func (t *tray) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 	case message == wmClipPopup:
 		t.clipPopupShow()
 		return 0
-	case message == wmBubble:
-		t.bubbleUpdate()
-		return 0
 	case message == wmCommand:
 		switch wParam & 0xFFFF {
-		case menuBubble:
-			t.a.mu.Lock()
-			t.a.settings.NoBubble = !t.a.settings.NoBubble
-			t.a.mu.Unlock()
-			go t.a.saveSettings()
-			t.bubbleUpdate()
-			t.a.hub.changed()
 		case menuOpen:
 			go t.a.showWindow()
 		case menuPair:
@@ -282,14 +270,6 @@ func (t *tray) menu() {
 		pAppendMenu.Call(m, mfString, id, uintptr(unsafe.Pointer(p)))
 	}
 	add(menuOpen, "Open LAN Share")
-	t.a.mu.Lock()
-	hidden := t.a.settings.NoBubble
-	t.a.mu.Unlock()
-	if hidden {
-		add(menuBubble, "Show the bubble")
-	} else {
-		add(menuBubble, "Hide the bubble")
-	}
 	add(menuPair, "Pair a phone…")
 	pAppendMenu.Call(m, mfSeparator, 0, 0)
 	add(menuQuit, "Quit")
