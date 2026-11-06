@@ -12,8 +12,6 @@
     <!-- The floating assistant bubble and its microphone. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- Optional, granted from a computer (adb): lets copies on the phone reach the laptops with no tap. -->
-    <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Staying ready to receive from laptops while the app is closed. -->
@@ -72,29 +70,6 @@
             android:taskAffinity=".assistant"
             android:theme="@style/Theme.LanShare.Assistant"
             android:windowSoftInputMode="adjustResize" />
-
-        <!-- Invisible for a split second: reads what was just copied in another app. -->
-        <activity
-            android:name=".ClipReadActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:noHistory="true"
-            android:taskAffinity=".clipread"
-            android:theme="@style/Theme.LanShare.Invisible" />
-
-        <!-- "Notify my laptops when I copy on this phone": switched on once in Accessibility. -->
-        <service
-            android:name=".ClipAccessibility"
-            android:exported="false"
-            android:label="@string/clip_accessibility_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/clip_accessibility" />
-        </service>
 
         <!-- The Copy button on "Copied on NIKHIL-PC". -->
         <receiver

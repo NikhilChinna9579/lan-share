@@ -290,5 +290,17 @@
                 android:text="In any app, tap Share → LAN Share"
                 android:textSize="13sp" />
         </LinearLayout>
+
+        <!-- Which build this is (filled in from the version) -->
+        <TextView
+            android:id="@+id/buildStamp"
+            style="@style/Text.Body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="8dp"
+            android:alpha="0.7"
+            android:gravity="center"
+            android:textSize="12sp" />
     </LinearLayout>
 </ScrollView>

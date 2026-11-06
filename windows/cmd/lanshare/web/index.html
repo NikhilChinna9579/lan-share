@@ -173,6 +173,7 @@
 
   <h2>Recent activity</h2>
   <div class="card act" id="activity"></div>
+  <p class="small muted center" id="buildStamp" style="opacity:.7;margin:18px 0 6px"></p>
 </div>
 
 <div id="modal" class="modal gone"><div class="sheet" id="sheet"></div></div>
@@ -371,6 +372,7 @@ function render() {
 
   // Activity, newest first.
   const kinds = {received:["down","ok"], sent:["up","ok"], paired:["link",""], online:["phone","ok"], offline:["phone","off"], error:["error","bad"], info:["info",""]};
+  $("buildStamp").textContent = `LAN Share ${S.me.version}` + (S.me.built ? ` · built ${S.me.built}` : "");
   $("activity").innerHTML = S.activity.length ? S.activity.slice(0, 30).map((a) => {
     const [ic, cls] = kinds[a.kind] || ["info", ""];
     return `<div class="item"><div class="ic ${cls}">${icon(ic)}</div><div class="grow"><div>${esc(a.text)}</div>
@@ -480,7 +482,7 @@ function renderSettings(el) {
       <button class="r" data-act="firewall"><span class="ic">${icon("shield")}</span><span class="grow"><div>Allow through Windows Firewall</div><div class="t2">Fixes "phone can't connect to laptop". Windows asks once.</div></span></button>
       ${S.me.installed ? `<button class="r" data-act="uninstall"><span class="ic">${icon("close")}</span><span class="grow"><div>Uninstall LAN Share</div><div class="t2">Your pairings and settings are kept</div></span></button>` : ""}
       <button class="r" data-act="openlog"><span class="ic">${icon("doc")}</span><span class="grow"><div>Open log file</div><div class="t2">${esc(S.me.logPath)}</div></span></button>
-      <div class="r"><span class="ic">${icon("desktop")}</span><span class="grow"><div>${esc(S.me.name)}</div><div class="t2">${esc(S.me.host)}:${S.me.port} · version ${esc(S.me.version)}${S.me.keyProtected ? " · key protected by Windows" : ""}</div></span></div>
+      <div class="r"><span class="ic">${icon("desktop")}</span><span class="grow"><div>${esc(S.me.name)}</div><div class="t2">${esc(S.me.host)}:${S.me.port} · version ${esc(S.me.version)}${S.me.built ? " · built " + esc(S.me.built) : ""}${S.me.keyProtected ? " · key protected by Windows" : ""}</div></span></div>
     </div>
     <div class="foot"><button class="btn danger" data-act="quit">Quit LAN Share</button></div>
     <p class="small center">Closing the window keeps LAN Share running, so phones can still send to you.</p>

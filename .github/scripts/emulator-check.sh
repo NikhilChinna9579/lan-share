@@ -124,6 +124,7 @@ bail_if_crashed() { if crashed; then fail "app crashed during: $1"; A logcat -d 
 A logcat -b crash -c
 mark; night no; app
 expect 30 'screen: unpaired' "first launch shows pairing"
+expect 5 'version: [0-9.]+ · built [0-9]+ [A-Z][a-z]+ 20[0-9]{2}' "home screen shows which build this is (build time)"
 shot 01-unpaired-light
 bail_if_crashed "first launch"
 night yes; app; shot 01-unpaired-dark; night no
@@ -475,27 +476,6 @@ mark; hook demo.txt folders; app 4; shot 12-shared-folders
 expect 10 'row: Stay reachable' "settings offer 'stay reachable'"
 expect 5 'row: Floating assistant bubble' "settings offer the bubble"
 night yes; hook demo.txt folders; app 4; shot 12-shared-folders-dark; night no
-
-# ---------------------------------------------------------------- 11a. "notify my laptops when I copy here"
-# Switched on once in Accessibility (here through settings, as the switch does). Then a copy
-# made while LAN Share is in the background shows up on the laptop with a Copy button.
-A shell appops set $PKG SYSTEM_ALERT_WINDOW deny   # without the bubble's permission too
-mark
-A shell settings put secure enabled_accessibility_services $PKG/.ClipAccessibility
-A shell settings put secure accessibility_enabled 1
-expect 20 'copy detector: on' "copy detector switched on in Accessibility"
-mark; hook demo.txt "bg_copy:Copied in another app 7781"; app 2
-# The test's restart is a force-stop, which also stops accessibility services (a person never
-# does this); switch it back on, as Android does when the app starts normally.
-A shell settings put secure enabled_accessibility_services '""'; sleep 1
-A shell settings put secure enabled_accessibility_services $PKG/.ClipAccessibility
-expect 8 'copy detector: on' "copy detector running again"
-sleep 10; shot 06c-copied-preview
-expect 20 'clipboard watcher: copy seen' "a copy made in another app is noticed"
-until_ok 20 "get /api/state | grep -q 'Copied in another app 7781'" && pass "…and the laptop shows it with a Copy button" || fail "phone copy offered on the laptop"
-api /api/clip | grep -q 'Copied in another app 7781' && fail "the laptop replaced its clipboard without asking" || pass "…without replacing the laptop's clipboard"
-A shell settings put secure enabled_accessibility_services '""'
-bail_if_crashed "copy detector"
 
 # ---------------------------------------------------------------- 10. firewall-like one-way problem
 # Restart the laptop program so it refuses incoming connections (as a blocking Windows

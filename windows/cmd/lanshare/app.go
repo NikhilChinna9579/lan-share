@@ -1036,7 +1036,7 @@ func (a *app) stateJSON() []byte {
 	sort.SliceStable(devs, func(i, j int) bool { return strings.ToLower(devs[i].Name) < strings.ToLower(devs[j].Name) })
 	b, _ := json.Marshal(map[string]any{
 		"me": map[string]any{
-			"name": a.name, "host": a.host, "port": a.port, "version": version,
+			"name": a.name, "host": a.host, "port": a.port, "version": version, "built": builtStamp(),
 			"logPath": a.logPath, "autostart": autostartEnabled(), "platform": platformName(),
 			"installed": isInstalled(), "canInstall": installSupported() && !isInstalled(),
 			"ask": a.settings.Ask, "browse": !a.settings.NoBrowse, "keyProtected": identity.Protected(),
@@ -1170,4 +1170,14 @@ func lanAddress() (best string, others []string) {
 		}
 	}
 	return best, others
+}
+
+// builtStamp says when this .exe was built ("6 Nov 2026, 1:45 PM"), shown in the window
+// so it's easy to tell which build is running; "" for a local dev build.
+func builtStamp() string {
+	secs, err := strconv.ParseInt(buildTime, 10, 64)
+	if err != nil || secs <= 0 {
+		return ""
+	}
+	return time.Unix(secs, 0).Local().Format("2 Jan 2006, 3:04 PM")
 }

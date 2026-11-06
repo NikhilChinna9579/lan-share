@@ -11,8 +11,11 @@ android {
         applicationId = "com.nikhil.lanshare"
         minSdk = 29 // Android 10: first version with TLS 1.3, which the protocol requires
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0"
+        // Every build is newer than the last (minutes since 1970) and says when it was built,
+        // shown at the bottom of the home screen: easy to tell which APK is installed.
+        val built = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Kolkata"))
+        versionCode = (built.toEpochSecond() / 60).toInt()
+        versionName = "0.6 · built " + built.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a", java.util.Locale.ENGLISH)) + " IST"
         // Phones (64- and 32-bit ARM) and the x86_64 emulator: keeps the wake word engine small.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }

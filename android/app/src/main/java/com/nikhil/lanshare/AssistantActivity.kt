@@ -125,7 +125,6 @@ class AssistantActivity : Activity() {
         Bubble.update(this)
         open = true
         Clip.screenShown()
-        ClipWatcher.start(this)
         ReceiveService.refresh(this) // "Hey Jarvis" listening pauses while we're open
         Hub.listen(onHub)
         presence.start()

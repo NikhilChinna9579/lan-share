@@ -75,6 +75,8 @@ class MainActivity : Activity() {
         setContentView(R.layout.activity_main)
         edgeToEdge()
         worker.execute { RemoteCache.clean(this); DirectShare.update(this) }
+        findViewById<TextView>(R.id.buildStamp).text = "LAN Share ${appVersion()}"
+        Log.i(TAG, "version: ${appVersion()}")
 
         receiveDot = findViewById(R.id.receiveDot)
         receiveStatus = findViewById(R.id.receiveStatus)
@@ -131,7 +133,6 @@ class MainActivity : Activity() {
         Hub.listen(onHub)
         presence.start()
         Clip.screenShown()
-        ClipWatcher.start(this) // while on screen: Android 13+ asks to allow log access then
         render()
     }
 
@@ -584,9 +585,13 @@ class MainActivity : Activity() {
             else "Your laptops can save into and get files from these folders, and nothing else on this phone.")
         foldersSheet = sheet
         fillSharedFolders(sheet)
+        sheet.note("LAN Share ${appVersion()}")
         sheet.primary("Done")
         sheet.show()
     }
+
+    private fun appVersion(): String =
+        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
 
     private fun fillSharedFolders(sheet: Sheet) {
         sheet.clear()
@@ -651,10 +656,6 @@ class MainActivity : Activity() {
                 trail = if (ask) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
                 Clip.setAskFirst(this, !ask); fillSharedFolders(sheet)
             })
-            val why = ClipWatcher.problem(this)
-            sheet.add(Sheet.Row(R.drawable.ic_shield, "Notify my laptops when I copy here",
-                sub = why ?: "On: copy anything; your laptops show it with a Copy button",
-                chip = if (why == null) "On" else "Set up", dismiss = false) { explainWatcher() })
             val auto = Clip.autoEnabled(this)
             sheet.add(Sheet.Row(R.drawable.ic_document, "Send what I copy here automatically",
                 sub = if (auto) "When LAN Share or the bubble opens (Android allows it only then)" else "Off: send it from the bubble or the Send sheet",
@@ -827,28 +828,6 @@ class MainActivity : Activity() {
         data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris += clip.getItemAt(i).uri }
         if (uris.isEmpty()) data.data?.let { uris += it }
         if (uris.isNotEmpty()) chooseFolder(target, uris)
-    }
-
-    /** How to turn on "notify my laptops when I copy here" (once, in Accessibility). */
-    private fun explainWatcher() {
-        val on = ClipAccessibility.isOn(this)
-        val sheet = Sheet(this, "Notify my laptops when I copy",
-            "Android doesn't tell apps when you copy something. Switched on once in Accessibility, LAN Share notices " +
-            "Android's “Copied” preview and Copy buttons, and your laptops show “Copied on ${myName}” with a Copy button. " +
-            "It doesn't read or keep anything else on your screen.")
-        if (!on) {
-            sheet.message("1. Tap “Allow restricted settings” below → ⋮ (top right) → Allow restricted settings. " +
-                "(Android asks this for apps not from the Play Store.)")
-            sheet.message("2. Tap “Turn on in Accessibility” → LAN Share → switch it on.")
-            sheet.add(Sheet.Row(R.drawable.ic_shield, "Allow restricted settings", sub = "Opens LAN Share's App info", dismiss = false) {
-                runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
-            })
-        }
-        sheet.note(if (on) "It's on." else null)
-        sheet.primary(if (on) "Accessibility settings" else "Turn on in Accessibility") {
-            runCatching { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        }
-        sheet.show()
     }
 
     /** Files shared from another app ("this file" in the requirements). */
@@ -1156,13 +1135,6 @@ class MainActivity : Activity() {
             Log.i(TAG, "test hook: $mode")
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
             if (mode == "ask_clip_off" || mode == "ask_clip_on") { Clip.setAskFirst(this, mode.endsWith("on")); return@let }
-            if (mode.startsWith("bg_copy:")) { // copied "in another app" a few seconds after LAN Share leaves
-                val text = mode.removePrefix("bg_copy:")
-                val cm = getSystemService(android.content.ClipboardManager::class.java)
-                main.postDelayed({ moveTaskToBack(true) }, 6000) // time to answer Android's log-access question
-                main.postDelayed({ cm.setPrimaryClip(android.content.ClipData.newPlainText("test", text)) }, 12000)
-                return@let
-            }
             if (mode.startsWith("copy_only:")) { // as if copied in another app, then LAN Share left
                 Clip.holdUntil = System.currentTimeMillis() + 3000
                 getSystemService(android.content.ClipboardManager::class.java)
