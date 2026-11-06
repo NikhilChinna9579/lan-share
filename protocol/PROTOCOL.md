@@ -62,7 +62,7 @@ Every control message is a frame:
 | --- | --- | --- | --- |
 | `hello` | both, first frame | `v` (int), `name` (string), `platform` | Version mismatch → `error` `version`, close |
 | `ping` | client → server | — | |
-| `pong` | server → client | — | |
+| `pong` | server → client | `reach` (bool, optional) | `false` = "I can't connect back to you" (usually a firewall on the pinging device) |
 | `error` | either | `code` (string), `message` (string) | See codes below |
 
 ### Pairing
@@ -82,24 +82,32 @@ The QR code encodes this JSON (as text):
 The one-time code is random, valid for **2 minutes**, and dies after one use or
 **5 wrong attempts**.
 
-### Folders
+### Shared folders
+
+Each device decides which of its folders it shares. Only those (and their subfolders)
+can be saved into or browsed; nothing else on the device is reachable, so system
+folders never appear.
 
 | Type | Direction | Fields |
 | --- | --- | --- |
-| `folders_request` | sender → receiver | — |
-| `folders_response` | receiver → sender | `default` (folder key), `folders`: list of `{key, label}` |
+| `folders_request` | either | — |
+| `folders_response` | reply | `default` (folder key), `folders`: list of `{key, label}` |
+| `list_request` | either | `folder` (key), `path` (subfolder, `/`-separated, optional) |
+| `list_response` | reply | `folder`, `path`, `dirs`: names, `files`: list of `{name, size, modified}` (ms) |
 
-Folder **keys** (e.g. `downloads`, `documents`, `pictures`, `recent:3`) are what travel
-on the wire — never full paths. The receiver maps keys to real paths itself, so a sender
-can never write outside the folders the receiver offers.
+Folder **keys** (e.g. `downloads`, `documents`, `f-3a9c12be`) are what travel on the wire,
+never full paths. The receiver maps keys to real paths itself and rejects any `path` that
+would leave the shared folder (`..`, links, junctions) with `error` `bad_folder`. Hidden
+and system items are not listed. A device may share folders it can't list subfolders of
+(for example Android's standard folders); it then returns empty `dirs`.
 
 ### Transfer
 
 | Type | Direction | Fields |
 | --- | --- | --- |
-| `file_offer` | sender → receiver | `transfer_id` (UUID), `folder` (key), `files`: list of `{name, size}` |
-| `file_accept` | receiver → sender | `transfer_id` |
-| `file_reject` | receiver → sender | `transfer_id`, `reason`: `declined`, `no_space`, `bad_folder`, `bad_name` |
+| `file_offer` | sender → receiver | `transfer_id` (UUID), `folder` (key), `path` (subfolder, optional), `files`: list of `{name, size, path?}`; a file's own `path` is its subfolder when a whole folder is sent ("Trip/Day 2") |
+| `file_accept` | receiver → sender | `transfer_id`, `offsets` (optional): per file, bytes the receiver already has from an interrupted try |
+| `file_reject` | receiver → sender | `transfer_id`, `reason`: `declined` (the person said no, or didn't answer within 50 s), `no_space`, `bad_folder`, `bad_name` |
 | *(raw bytes)* | sender → receiver | exactly `size` bytes of the current file |
 | `file_end` | sender → receiver | `index` (int), `sha256` (hex) |
 | `transfer_done` | receiver → sender | `transfer_id`, `saved`: list of final file names |
@@ -113,9 +121,70 @@ Receiver rules:
    name (`name (2).ext` if taken). Mismatch → delete the `.part`, send `error` `checksum`.
 3. Connection drops mid-transfer → delete every `.part` from that transfer.
 
+A receiver may ask its user before answering `file_offer` ("Ask before receiving");
+the sender waits up to 60 s for `file_accept` / `file_reject`. Each part of a file's
+`path` is cleaned like a file name; a part that is `..` (or cleans to nothing) rejects
+the offer with `bad_name`.
+
+**Resuming.** A receiver may keep a big file (≥ 4 MB) that was cut off by a dropped
+connection, out of sight (its own private folder; on Android a hidden pending
+MediaStore item), keyed by sender, place, name and size. When the same file is offered
+again it answers with `offsets`; the sender reads those bytes only for the checksum
+and sends the rest. The checksum still covers the whole file. A transfer cancelled on
+the receiving side keeps nothing; a checksum mismatch deletes the kept part.
+Unfinished files are deleted after 3 days. Senders must honour `offsets`.
+
+### Search
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `search_request` | either | `query`: words that must all appear in the file name (any case) |
+| `search_response` | reply | `results`: list of `{folder, path, name, size, modified}`, newest first, at most 200 |
+
+Searches every shared folder and its subfolders (hidden items skipped), for at most
+about 2 seconds. Refused with `not_allowed` when browsing is off. A hit can be fetched
+with `fetch_request` using its `folder` and `path`.
+
+### Shared clipboard
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `clip_push` | either | `text` (≤ 256 KB): put it on the receiver's clipboard |
+| `clip_ok` | reply | — (or `error` `not_allowed` when clipboard sharing is off) |
+| `clip_request` | either | — ("paste from that device") |
+| `clip_response` | reply | `available` (bool), `text`, or `reason` (sharing off, nothing copied, marked private, or, on Android, LAN Share not on screen) |
+
+Laptops push what the person copies to their online phones as it's copied. Android
+apps can only read the clipboard while on screen, so phones push only when the person
+asks (assistant, Send sheet, Share → LAN Share with text). Copies that password
+managers mark as private (Windows `ExcludeClipboardContentFromMonitorProcessing` /
+`CanIncludeInClipboardHistory`=0, Android `EXTRA_IS_SENSITIVE`) are never sent.
+
+### New folder
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `mkdir_request` | either | `folder` (key), `path` (optional), `name` |
+| `mkdir_ok` | reply | `name` as created (cleaned). Existing folder is fine. Errors: `bad_folder` |
+
+### Fetch (getting files from the other device)
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| `fetch_request` | requester → owner | `transfer_id`, `folder` (key), `path` (optional), `files`: list of file names in that folder |
+
+The owner answers like a sender: `file_offer` (same `transfer_id`, with sizes), and after
+the requester's `file_accept` the raw bytes and `file_end` frames; the requester ends
+with `transfer_done`. The requester follows the receiver rules above and saves into a
+folder of its own choosing (its default). The owner refuses with `error` `bad_folder`
+(not a shared folder, or the path leaves it) or `not_found` (a name with path parts, a
+hidden or system file, a folder, or a file that isn't there). Only files directly in
+the requested folder can be fetched. A device whose user turned browsing off answers
+`list_request` and `fetch_request` with `error` `not_allowed`.
+
 ## 6. Error codes
 
-`version`, `unknown_type`, `bad_frame`, `not_trusted`, `bad_folder`, `checksum`,
+`version`, `unknown_type`, `bad_frame`, `not_trusted`, `bad_folder`, `not_found`, `not_allowed`, `checksum`,
 `io`, `internal`.
 
 ## 7. Versioning

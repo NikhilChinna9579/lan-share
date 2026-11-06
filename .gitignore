@@ -16,3 +16,10 @@ android/.idea/
 Thumbs.db
 .vscode/
 .idea/
+
+# Fixed debug signing key: committed on purpose (see android/app/build.gradle.kts)
+!android/debug.keystore
+
+# Generated in CI by go-winres (icon and version info for the .exe)
+*.syso
+winres/

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#0F1115</color>
+    <color name="surface">#1A1D24</color>
+    <color name="outline">#2A2E38</color>
+    <color name="ink">#ECEEF3</color>
+    <color name="ink_muted">#A0A6B3</color>
+    <color name="primary">#8AB4FF</color>
+    <color name="on_primary">#0A1F4D</color>
+    <color name="primary_container">#1E3A75</color>
+    <color name="on_primary_container">#DCE6FF</color>
+    <color name="online">#4ADE80</color>
+    <color name="offline">#6B7280</color>
+    <color name="checking">#FACC15</color>
+    <color name="error">#F87171</color>
+    <color name="error_container">#3B1A1A</color>
+    <color name="success_container">#16301F</color>
+    <color name="track">#2A2E38</color>
+</resources>

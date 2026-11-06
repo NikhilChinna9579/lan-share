@@ -1,11 +1,19 @@
-name: build
+name: build and test
 
-# Runs on every push and pull request. Download the .exe and the APK from the
-# run's "Artifacts" section on GitHub (Actions tab → pick the run → scroll down).
+# Runs only when started by hand (Actions tab → "build and test" → Run workflow), so
+# GitHub Actions minutes are spent once per batch of features, not on every push.
+# All jobs run in parallel. Choose which suites to run; the builds are always made.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
+    inputs:
+      windows_tests:
+        description: "Windows app tests (Linux + real Windows)"
+        type: boolean
+        default: true
+      android_tests:
+        description: "Android emulator test (the slowest, ~10 min)"
+        type: boolean
+        default: true
 
 jobs:
   windows:
@@ -21,20 +29,115 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: windows/go.mod
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... && GOOS=windows go vet ./...
       - name: Test
         run: go test -race ./...
+      - name: Build phone simulator (for testing)
+        run: go build ./cmd/fakephone
+      - name: Build the icon into the .exe
+        working-directory: windows/cmd/lanshare
+        run: |
+          go install github.com/tc-hib/go-winres@v0.3.3
+          go-winres simply --arch amd64 --icon assets/icon-256.png --manifest gui \
+            --product-name "LAN Share" --file-description "LAN Share: send files between your phone and PC on your Wi-Fi" \
+            --original-filename lanshare.exe --product-version 0.6.0 --file-version 0.6.0 --copyright "Nikhil Chinna"
       - name: Build lanshare.exe
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: "0"
-        # -s -w strips debug info: a smaller .exe.
-        run: go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_SHA::7}" -o lanshare.exe ./cmd/lanshare
+        # Not stripped (-s -w): stripped Go programs trip antivirus heuristics far more often.
+        # -H windowsgui: a windowed app, no console window.
+        run: go build -trimpath -ldflags "-H windowsgui -X main.version=${GITHUB_SHA::7} -X main.buildTime=$(date +%s)" -o lanshare.exe ./cmd/lanshare
       - uses: actions/upload-artifact@v4
         with:
           name: lanshare-windows
           path: windows/lanshare.exe
+
+  windows-e2e:
+    name: Windows app end-to-end (window + simulated phone)
+    if: inputs.windows_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: windows/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build
+        working-directory: windows
+        run: go build -o /tmp/lanshare ./cmd/lanshare && go build -o /tmp/fakephone ./cmd/fakephone
+      - name: Install browser for the test
+        run: npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
+      - name: Run
+        run: timeout 320 node windows/e2e/e2e.js /tmp/lanshare /tmp/fakephone e2e-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-e2e
+          path: e2e-out
+
+  windows-native-e2e:
+    name: Windows app end-to-end on real Windows
+    if: inputs.windows_tests
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: windows/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # The exact .exe people download, scanned by Microsoft Defender with fresh definitions:
+      # if Defender would block it, the run fails here.
+      - uses: actions/download-artifact@v4
+        with:
+          name: lanshare-windows
+          path: release
+      - name: Microsoft Defender scan of the release .exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $mp = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
+          & $mp -SignatureUpdate 2>&1 | Select-Object -Last 2
+          try { Get-MpComputerStatus | Select-Object AMServiceEnabled, AMEngineVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Format-List } catch { "status: $_" }
+          $exe = (Resolve-Path release\lanshare.exe).Path
+          & $mp -Scan -ScanType 3 -File $exe -DisableRemediation 2>&1 | Select-Object -Last 5
+          $code = $LASTEXITCODE
+          try { Get-MpThreatDetection | Format-List ThreatID, Resources } catch {}
+          if ($code -eq 2) { Write-Error "Defender flagged lanshare.exe"; exit 1 }
+          if ($code -ne 0) { Write-Output "::warning::Defender couldn't scan here (exit $code); the scan didn't run"; exit 0 }
+          Write-Output "Defender: lanshare.exe is clean"
+      - name: Build (console build, so the test can read its output)
+        working-directory: windows
+        shell: bash
+        run: mkdir -p /c/lst && go build -o /c/lst/lanshare.exe ./cmd/lanshare && go build -o /c/lst/fakephone.exe ./cmd/fakephone
+      - name: Install browser for the test
+        shell: bash
+        run: npm install --no-save playwright@1.48.2 && npx playwright install chromium
+      - name: Run
+        shell: bash
+        run: node windows/e2e/e2e.js C:/lst/lanshare.exe C:/lst/fakephone.exe e2e-out-win
+      - name: Install and uninstall on real Windows
+        shell: bash
+        timeout-minutes: 3
+        run: |
+          go -C windows build -ldflags "-X main.buildTime=$(date +%s)" -o /c/lst/lanshare-inst.exe ./cmd/lanshare
+          bash .github/scripts/windows-install-check.sh C:/lst/lanshare-inst.exe
+      - name: Show the app's log
+        if: always()
+        shell: bash
+        run: |
+          grep -hiE "tray|bubble|hotkey|voice" e2e-out-win/laptop.log e2e-out-win/lanshare.log 2>/dev/null | head -40 || true
+          cat e2e-out-win/lanshare.log e2e-out-win/laptop.log 2>/dev/null | tail -60 || true
 
   android:
     name: Android app (Kotlin)
@@ -51,9 +154,128 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Build debug APK and run unit tests (voice command parser)
+        run: gradle --no-daemon assembleDebug testDebugUnitTest
+      # Signed release APK: only when the signing key is set up as repository secrets.
+      - name: Build signed release APK
+        env:
+          KEY_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEY_B64" ]; then echo "No signing key secrets yet: skipping the release APK."; exit 0; fi
+          echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks" gradle --no-daemon assembleRelease
+          rm -f "$RUNNER_TEMP/release.jks"
+          ls -la app/build/outputs/apk/release/
       - uses: actions/upload-artifact@v4
         with:
           name: lanshare-android
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
+
+  emulator:
+    name: Android app on an emulator, against the real laptop program
+    if: inputs.android_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space (the emulator needs several GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/local/lib/node_modules \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/share/swift /usr/local/julia* || true
+          df -h /
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: windows/go.mod
+      - name: Build APK (and the signed release, if the key is set up)
+        working-directory: android
+        env:
+          KEY_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          gradle --no-daemon assembleDebug
+          if [ -n "$KEY_B64" ]; then
+            echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            RELEASE_KEYSTORE="$RUNNER_TEMP/release.jks" gradle --no-daemon assembleRelease
+            rm -f "$RUNNER_TEMP/release.jks"
+          fi
+      - name: Build laptop program (Linux build of the Windows app)
+        working-directory: windows
+        run: go build -o ../bin/lanshare ./cmd/lanshare && go build -o ../bin/fakephone ./cmd/fakephone
+      - name: Run on emulator
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          cores: 3
+          disk-size: 3000M
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # The check itself is capped at 15 minutes; every command inside has its own limit.
+          script: timeout 900 bash .github/scripts/emulator-check.sh
+      - name: Publish screenshots to the checks branch
+        if: always()
+        run: |
+          mkdir -p check-out && cd check-out
+          cat RESULTS.txt 2>/dev/null || true
+          printf 'branch: %s\ncommit: %s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" > RUN.txt
+          git init -q -b checks
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add . && git commit -qm "Checks from $GITHUB_REF_NAME @ ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" checks
+
+  # Puts the latest .exe and APK on the "builds" branch, replacing the previous ones,
+  # so they can be downloaded straight from GitHub's file view without unzipping.
+  publish:
+    name: Publish latest builds
+    needs: [windows, windows-e2e, windows-native-e2e, android, emulator]
+    # Publish only if every suite that ran passed (skipped suites don't block).
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Force-push to the builds branch
+        run: |
+          mkdir site && cd site
+          cp ../out/lanshare-windows/lanshare.exe .
+          # The signed release is the one to install; the debug build (with test hooks)
+          # is kept as lanshare-debug.apk.
+          A=../out/lanshare-android
+          [ -f $A/debug/app-debug.apk ] && D=$A/debug/app-debug.apk || D=$A/app-debug.apk
+          [ -f $A/release/app-release.apk ] && R=$A/release/app-release.apk || R=$A/app-release.apk
+          if [ -f "$R" ]; then cp "$R" lanshare.apk; cp "$D" lanshare-debug.apk; else cp "$D" lanshare.apk; fi
+          printf 'branch: %s\ncommit: %s\nbuilt: %s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" "$(date -u +%FT%TZ)" > BUILD.txt
+          git init -q -b builds
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add . && git commit -qm "Builds from $GITHUB_REF_NAME @ ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" builds
