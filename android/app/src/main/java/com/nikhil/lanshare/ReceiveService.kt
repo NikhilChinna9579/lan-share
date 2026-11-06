@@ -44,7 +44,7 @@ class ReceiveService : Service() {
             .setOngoing(true)
             // Copied something? One tap here sends it to the laptop (it shows a Copy box there).
             .addAction(Notification.Action.Builder(null, "Send copied text", PendingIntent.getActivity(this, 4,
-                Intent(this, AssistantActivity::class.java).putExtra(AssistantActivity.EXTRA_SEND_CLIP, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                Intent(this, ClipSendActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
                 PendingIntent.FLAG_IMMUTABLE)).build())
             // Always a way to the assistant, bubble or not.
             .addAction(Notification.Action.Builder(null, "🎤 Assistant", PendingIntent.getActivity(this, 3,

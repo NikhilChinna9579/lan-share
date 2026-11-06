@@ -15,6 +15,14 @@
         <item name="android:alertDialogTheme">@style/Theme.LanShare.Alert</item>
     </style>
 
+    <!-- A small window in the middle of the screen ("Send copied text"). -->
+    <style name="Theme.LanShare.Popup" parent="android:Theme.Material.Light.Dialog.NoActionBar">
+        <item name="android:colorAccent">@color/primary</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
+        <item name="android:windowCloseOnTouchOutside">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
     <style name="Theme.LanShare.Alert" parent="android:Theme.Material.Light.Dialog.Alert">
         <item name="android:colorAccent">@color/primary</item>
         <item name="android:textColorPrimary">@color/ink</item>

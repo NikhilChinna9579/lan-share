@@ -226,7 +226,24 @@ until_ok 10 "A shell settings get secure sysui_qs_tiles | grep -q ClipTile" || l
 # Android delivers a tile's tap only while Quick Settings is open (as when a person taps it).
 A shell cmd statusbar expand-settings; sleep 3
 mark; A shell cmd statusbar click-tile $PKG/.ClipTile 2>&1 | head -2
-expect 15 'assistant: send copied text \(tile\)' "Quick Settings tile opens and reads what's copied"
+expect 15 'clip send: shown, [1-9][0-9]* device\(s\), 14 chars' "the tile opens a small window with what's copied and the devices"
+sleep 1; shot 06d-clip-send-window
+# In the middle of the screen (not a sheet from the bottom).
+A shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; A pull /sdcard/ui.xml "$WORK/ui.xml" >/dev/null 2>&1
+H=$(A shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1 | cut -dx -f2)
+MID=$(python3 - "$WORK/ui.xml" "$H" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+h = int(sys.argv[2]); ys = []
+for n in ET.parse(sys.argv[1]).iter("node"):
+    if n.get("text") in ("Send copied text", "Cancel") and n.get("package") == "com.nikhil.lanshare":
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds"))); ys += [y1, y2]
+print("yes" if ys and min(ys) > h * 0.2 and max(ys) < h * 0.8 else "no %s of %d" % (ys, h))
+PY
+)
+[ "$MID" = yes ] && pass "…in the middle of the screen" || fail "Send copied text window position ($MID)"
+until_ok 10 "tap_logged 'Send DESKTOP-NIKHIL'"
+expect 15 'clip send: to DESKTOP-NIKHIL' "Send beside the laptop sends it"
+until_ok 10 "! A shell dumpsys activity activities 2>/dev/null | grep -q 'ClipSendActivity'" && pass "…and the window closes" || fail "Send copied text window stayed open"
 until_ok 15 "get /api/state | grep -q 'Tile copy 5150'" && pass "…and the laptop shows it in its Copy box" || fail "tile copy offered on the laptop"
 api /api/clip | grep -q 'Tile copy 5150' && fail "the laptop's clipboard was replaced without Copy" || pass "…its clipboard untouched until Copy"
 A shell dumpsys notification --noredact 2>/dev/null | grep -q 'Send copied text' \
