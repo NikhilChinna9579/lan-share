@@ -67,13 +67,17 @@ func trackFront() {
 
 // registerSendHotkey makes Ctrl+Alt+S post WM_HOTKEY to the tray window.
 func registerSendHotkey(hwnd uintptr) {
-	r, _, err := pRegisterHotKey.Call(hwnd, hotkeySendID, modControl|modAlt|modNoRepeat, 'S')
-	if r == 0 {
-		logf("hotkey %s: not available (%v)", hotkeyComment, err)
-		return
-	}
-	logf("hotkey %s: send what's open", hotkeyComment)
 	go trackFront()
+	if r, _, err := pRegisterHotKey.Call(hwnd, hotkeySendID, modControl|modAlt|modNoRepeat, 'S'); r == 0 {
+		logf("hotkey %s: not available (%v)", hotkeyComment, err)
+	} else {
+		logf("hotkey %s: send what's open", hotkeyComment)
+	}
+	if r, _, err := pRegisterHotKey.Call(hwnd, hotkeyVoiceID, modControl|modAlt|modNoRepeat, vkSpace); r == 0 {
+		logf("hotkey %s: not available (%v)", voiceKeyName, err)
+	} else {
+		logf("hotkey %s: talk to LAN Share", voiceKeyName)
+	}
 }
 
 // frontWindowInfo describes window h: its title, Explorer's selection, recent files.

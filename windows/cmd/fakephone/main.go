@@ -49,6 +49,8 @@ func main() {
 	folders := files.NewFolders("downloads")
 	folders.Add("downloads", "Downloads", filepath.Join(inbox, "Download"))
 	folders.Add("documents", "Documents", filepath.Join(inbox, "Documents"))
+	folders.Add("pictures", "Pictures", filepath.Join(inbox, "Pictures"))
+	os.MkdirAll(filepath.Join(inbox, "Pictures"), 0o755)
 
 	if *pairFile != "" {
 		raw, err := os.ReadFile(*pairFile)

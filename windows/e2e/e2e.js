@@ -41,7 +41,7 @@ async function cleanup(code) {
   log(code === 0 ? "ALL PASSED" : `FAILED (${failures} problem(s))`);
   process.exit(code);
 }
-setTimeout(() => { log("TIMEOUT: the whole run took over 180 s"); failures++; cleanup(2); }, 180_000).unref();
+setTimeout(() => { log("TIMEOUT: the whole run took over 300 s"); failures++; cleanup(2); }, 300_000).unref();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const settle = () => sleep(400); // let sheet animations finish before a screenshot
@@ -57,7 +57,7 @@ async function waitFor(what, fn, ms = 10_000) {
 async function step(name, fn) {
   const s = Date.now();
   try {
-    await Promise.race([fn(), sleep(30_000).then(() => { throw new Error("step took over 30 s"); })]);
+    await Promise.race([fn(), sleep(60_000).then(() => { throw new Error("step took over 60 s"); })]);
     log(`ok    ${name} (${Date.now() - s} ms)`);
   } catch (e) {
     failures++;
@@ -70,6 +70,23 @@ async function step(name, fn) {
   const laptopData = path.join(work, "laptop");
   const openLog = path.join(work, "opened.txt"); // what the laptop "opened" (instead of launching apps)
   process.env.LANSHARE_OPEN_LOG = openLog;
+  process.env.LANSHARE_FAKE_HEARD = "get the latest photo from my phone"; // stands in for the microphone
+  const win = process.platform === "win32";
+  if (win) {
+    // Real Windows: the real speech recogniser listens to this sentence, spoken by Windows'
+    // own text-to-speech into a WAV file (there's no microphone on a test machine).
+    const wav = path.join(work, "said.wav");
+    try {
+      execFileSync("powershell", ["-NoProfile", "-Command",
+        `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = -1; ` +
+        `$s.SetOutputToWaveFile('${wav}'); $s.Speak('get the latest photo from my phone'); $s.Dispose()`], { timeout: 60_000 });
+      process.env.LANSHARE_SPEECH_WAV = wav;
+    } catch (e) { console.log("note: couldn't make the test recording: " + e.message); }
+  }
+  // Windows: is the bubble window on screen?
+  const bubbleVisible = () => execFileSync("powershell", ["-NoProfile", "-Command",
+    `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);'; ` +
+    `$h = [U.W]::FindWindow('LanShareBubble', $null); if ($h -ne [System.IntPtr]::Zero -and [U.W]::IsWindowVisible($h)) { 'yes' } else { 'no' }`], { timeout: 30_000 }).toString().trim() === "yes";
   const phoneData = path.join(work, "phone");
   const pairFile = path.join(work, "pair.json");
   const phoneInbox = path.join(phoneData, "inbox", "Download");
@@ -297,6 +314,53 @@ async function step(name, fn) {
       await page.getByText("Couldn't tell which file is open").first().waitFor();
     });
 
+    await step("assistant: typed “send this to my phone” sends the file in front (after 2 s)", async () => {
+      const f = path.join(work, "Trip notes.txt");
+      fs.writeFileSync(f, crypto.randomBytes(12_000));
+      await page.evaluate((f) => api("/api/assistant/say", {text: "send this to my phone", title: "Trip notes.txt - Notepad", recent: [f]}), f);
+      const card = page.locator(".card.assist");
+      await card.getByText("Sending Trip notes.txt to Nikhil's phone").first().waitFor();
+      await settle(); await page.screenshot({ path: path.join(out, "w08j-assistant.png") });
+      const dest = path.join(phoneInbox, "Trip notes.txt");
+      await waitFor("the file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 12_000, 15_000);
+    });
+
+    await step("assistant: Cancel within 2 s stops it", async () => {
+      const f = path.join(work, "Not this.txt");
+      fs.writeFileSync(f, "x".repeat(500));
+      await page.evaluate((f) => api("/api/assistant/say", {text: "send this to my phone", title: "Not this.txt - Notepad", recent: [f]}), f);
+      await page.locator('.card.assist [data-act="acancel"]').click();
+      await sleep(3000);
+      if (fs.existsSync(path.join(phoneInbox, "Not this.txt"))) throw new Error("sent despite Cancel");
+    });
+
+    await step("assistant: the 🎤 button, “get the latest photo from my phone”", async () => {
+      const pics = path.join(phoneData, "inbox", "Pictures");
+      fs.mkdirSync(pics, { recursive: true });
+      fs.writeFileSync(path.join(pics, "IMG_old.jpg"), crypto.randomBytes(5_000));
+      await sleep(30);
+      fs.writeFileSync(path.join(pics, "IMG_newest.jpg"), crypto.randomBytes(7_000));
+      fs.rmSync(path.join(laptopDownloads, "IMG_newest.jpg"), { force: true });
+      await page.locator("#micBtn").click();
+      const card = page.locator(".card.assist");
+      if (win) { // the real recogniser: allow for its start-up, and say so if Windows has none
+        await card.getByText(/Getting IMG_newest\.jpg|Can't listen|Didn't catch/).first().waitFor({ timeout: 45_000 });
+        const t = await card.innerText();
+        if (/isn't installed/.test(t)) { log("      note: this Windows has no English speech recogniser; voice not tested here"); return; }
+        if (!/Getting IMG_newest\.jpg/.test(t)) throw new Error("voice: " + t.replace(/\s+/g, " "));
+      } else {
+        await card.getByText("Getting IMG_newest.jpg from Nikhil's phone").first().waitFor({ timeout: 10_000 });
+      }
+      const got = path.join(laptopDownloads, "IMG_newest.jpg");
+      await waitFor("the newest photo on the laptop", () => fs.existsSync(got) && fs.statSync(got).size === 7_000, 15_000);
+    });
+
+    await step("assistant: nonsense gets a helpful answer", async () => {
+      await page.evaluate(() => api("/api/assistant/say", {text: "what's the weather"}));
+      await page.locator(".card.assist").getByText("I didn't understand that").waitFor();
+      await page.locator('.card.assist [data-act="adismiss"]').click();
+    });
+
     await step("search the phone's folders and get a file from a subfolder", async () => {
       const name = "Budget 2026.xlsx";
       fs.rmSync(path.join(laptopDownloads, name), { force: true });
@@ -520,6 +584,20 @@ async function step(name, fn) {
     await step("second launch hands over instead of starting twice", async () => {
       execFileSync(lanshare, ["-data", laptopData, "-no-window"], { env: { ...process.env, HOME: home }, timeout: 5_000 });
       if (procs[0].exitCode !== null) throw new Error("first copy died");
+    });
+
+    if (win) await step("Windows: the floating bubble is on screen, and hides from Settings", async () => {
+      await waitFor("the bubble", () => bubbleVisible(), 15_000);
+      try {
+        execFileSync("powershell", ["-NoProfile", "-Command",
+          `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; ` +
+          `$i = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($i); ` +
+          `$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $i.Save('${path.join(out, "w20-desktop-bubble.png")}')`], { timeout: 30_000 });
+      } catch {}
+      await page.evaluate(() => api("/api/settings", {bubble: false}));
+      await waitFor("the bubble hidden", () => !bubbleVisible(), 10_000);
+      await page.evaluate(() => api("/api/settings", {bubble: true}));
+      await waitFor("the bubble back", () => bubbleVisible(), 10_000);
     });
 
     await step("Quit stops the app", async () => {

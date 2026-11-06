@@ -284,6 +284,45 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return a.openRemote(in.Device, in.Folder, in.Path, in.Name, in.Size, in.Modified)
 	})
+	h("/api/assistant/listen", func(r *http.Request) (any, error) { // the window's mic button
+		var in struct {
+			Title  string
+			Recent []string
+		}
+		readJSON(r, &in)
+		front := func() openWindowInfo { return openWindowInfo{Title: in.Title, Recent: in.Recent} }
+		if in.Title == "" {
+			front = lastFrontInfo // the window that was in front before LAN Share's
+		}
+		a.assistListen(front)
+		return nil, nil
+	})
+	h("/api/assistant/say", func(r *http.Request) (any, error) { // typed in the window (and tests)
+		var in struct {
+			Text, Title string
+			Recent      []string
+		}
+		if err := readJSON(r, &in); err != nil || strings.TrimSpace(in.Text) == "" {
+			return nil, fmt.Errorf("type a command")
+		}
+		if in.Title != "" {
+			a.assistSet(func(s *assistState) {
+				s.frontF = func() openWindowInfo { return openWindowInfo{Title: in.Title, Recent: in.Recent} }
+			})
+		} else {
+			a.assistSet(func(s *assistState) { s.frontF = lastFrontInfo })
+		}
+		go a.assistHeard(in.Text)
+		return nil, nil
+	})
+	h("/api/assistant/cancel", func(*http.Request) (any, error) { a.assistCancel(); return nil, nil })
+	h("/api/assistant/pick", func(r *http.Request) (any, error) {
+		var in struct{ I int }
+		if err := readJSON(r, &in); err != nil {
+			return nil, err
+		}
+		return nil, a.assistPick(in.I)
+	})
 	h("/api/sendopen", func(r *http.Request) (any, error) { // "Send what's open"
 		var in struct {
 			Title             string
@@ -330,6 +369,7 @@ func serveAPI(a *app, ln net.Listener) {
 			Browse  *bool
 			Clip    *bool
 			ClipNow *bool
+			Bubble  *bool
 		}
 		if err := readJSON(r, &in); err != nil {
 			return nil, err
@@ -351,6 +391,10 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		if in.ClipNow != nil {
 			a.settings.ClipNow = *in.ClipNow
+		}
+		if in.Bubble != nil {
+			a.settings.NoBubble = !*in.Bubble
+			defer bubbleRefresh(a)
 		}
 		a.mu.Unlock()
 		a.hub.changed()
@@ -383,24 +427,10 @@ func serveAPI(a *app, ln net.Listener) {
 		if err := readJSON(r, &in); err != nil {
 			return nil, err
 		}
-		c, d, err := a.dial(in.Device)
+		n, err := a.pasteFromPhone(in.Device)
 		if err != nil {
 			return nil, err
 		}
-		defer c.Close()
-		text, err := c.RequestClip()
-		if err != nil {
-			return nil, err
-		}
-		if err := clipboard.Write(text); err != nil {
-			return nil, err
-		}
-		p, n := preview(text)
-		a.mu.Lock()
-		a.clipIn = &clipNote{Device: d.Name, Text: p, Chars: n, At: time.Now()}
-		a.clipFull = text
-		a.mu.Unlock()
-		a.hub.changed()
 		return map[string]any{"chars": n}, nil
 	})
 	h("/api/folders/default", func(r *http.Request) (any, error) {

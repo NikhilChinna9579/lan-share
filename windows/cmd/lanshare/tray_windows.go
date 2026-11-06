@@ -64,6 +64,7 @@ const (
 	menuPair     = 2
 	menuQuit     = 3
 	menuSendOpen = 4
+	menuBubble   = 5
 	hwndMessage  = ^uintptr(2) // HWND_MESSAGE (-3): a window that is never shown
 )
 
@@ -146,6 +147,9 @@ func startTray(a *app) {
 }
 
 func (t *tray) create() bool {
+	if pSetThreadDpiAwareness.Find() == nil { // sharp bubble on high-DPI screens
+		pSetThreadDpiAwareness.Call(^uintptr(3)) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (-4)
+	}
 	inst, _, _ := pGetModuleHandle.Call(0)
 	cls, _ := syscall.UTF16PtrFromString("LanShareTray")
 	wc := wndClassEx{LpfnWndProc: syscall.NewCallback(t.wndProc), HInstance: inst, LpszClassName: cls}
@@ -162,7 +166,9 @@ func (t *tray) create() bool {
 	t.created = uint32(r)
 	t.icon = loadAppIcon()
 	registerSendHotkey(t.hwnd)
-	return t.add()
+	ok := t.add()
+	t.bubbleUpdate()
+	return ok
 }
 
 func (t *tray) data() *notifyIconData {
@@ -236,6 +242,26 @@ func (t *tray) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 		default:
 		}
 		return 0
+	case message == wmBubble:
+		t.bubbleUpdate()
+		return 0
+	case message == wmBubbleLook:
+		if bubble != nil {
+			if wParam == 1 {
+				bubble.draw(bubble.listening)
+			} else {
+				bubble.draw(bubble.idle)
+			}
+		}
+		return 0
+	case message == wmHotkey && wParam == hotkeyVoiceID:
+		h, _, _ := pGetForegroundWindow.Call()
+		h = rootOf(h)
+		if h == 0 || ignoredWindow(h) {
+			h = lastFront
+		}
+		go t.a.assistListen(func() openWindowInfo { return frontWindowInfo(h) })
+		return 0
 	case message == wmHotkey && wParam == hotkeySendID:
 		h, _, _ := pGetForegroundWindow.Call()
 		if r, _, _ := pGetAncestor.Call(h, gaRoot); r != 0 {
@@ -245,6 +271,13 @@ func (t *tray) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 		return 0
 	case message == wmCommand:
 		switch wParam & 0xFFFF {
+		case menuBubble:
+			t.a.mu.Lock()
+			t.a.settings.NoBubble = !t.a.settings.NoBubble
+			t.a.mu.Unlock()
+			go t.a.saveSettings()
+			t.bubbleUpdate()
+			t.a.hub.changed()
 		case menuSendOpen:
 			go t.a.sendFront(0)
 		case menuOpen:
@@ -271,6 +304,14 @@ func (t *tray) menu() {
 	}
 	add(menuOpen, "Open LAN Share")
 	add(menuSendOpen, "Send what's open\t"+hotkeyComment)
+	t.a.mu.Lock()
+	hidden := t.a.settings.NoBubble
+	t.a.mu.Unlock()
+	if hidden {
+		add(menuBubble, "Show the bubble")
+	} else {
+		add(menuBubble, "Hide the bubble")
+	}
 	add(menuPair, "Pair a phone…")
 	pAppendMenu.Call(m, mfSeparator, 0, 0)
 	add(menuQuit, "Quit")
