@@ -1,7 +1,16 @@
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// When this APK was built: every build is newer than the last (minutes since 1970) and
+// says so, at the bottom of the home screen, so it's easy to tell which one is installed.
+val built: ZonedDateTime = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"))
 
 android {
     namespace = "com.nikhil.lanshare"
@@ -11,11 +20,8 @@ android {
         applicationId = "com.nikhil.lanshare"
         minSdk = 29 // Android 10: first version with TLS 1.3, which the protocol requires
         targetSdk = 35
-        // Every build is newer than the last (minutes since 1970) and says when it was built,
-        // shown at the bottom of the home screen: easy to tell which APK is installed.
-        val built = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Kolkata"))
         versionCode = (built.toEpochSecond() / 60).toInt()
-        versionName = "0.6 · built " + built.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a", java.util.Locale.ENGLISH)) + " IST"
+        versionName = "0.6 · built " + built.format(DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a", Locale.ENGLISH)) + " IST"
         // Phones (64- and 32-bit ARM) and the x86_64 emulator: keeps the wake word engine small.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
