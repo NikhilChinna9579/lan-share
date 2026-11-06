@@ -1,8 +1,8 @@
 package main
 
-// The floating bubble: a small round window that stays on top of every app. Click it to
-// talk to LAN Share (it glows while listening); right-click for a menu; drag it anywhere;
-// drop files on it to send them. Win32 only, like the tray: a layered window drawn from
+// The floating bubble: a small round window that stays on top of every app. Click it for
+// a menu (send files, paste from a phone, open LAN Share, hide); drag it anywhere; drop
+// files on it to send them. Win32 only, like the tray: a layered window drawn from
 // the app icon with smooth (anti-aliased) edges, never taking the focus from your app.
 
 import (
@@ -12,7 +12,6 @@ import (
 	"image/png"
 	"math"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
@@ -65,23 +64,18 @@ const (
 	tpmReturnCmd     = 0x0100
 	wmBubble         = wmApp + 10 // tray thread: show/hide the bubble per the setting
 	wmBubbleLook     = wmApp + 11 // tray thread: redraw (listening or not)
-	hotkeyVoiceID    = 2
-	vkSpace          = 0x20
-	voiceKeyName     = "Ctrl+Alt+Space"
 )
 
 type bubbleWin struct {
-	a         *app
-	hwnd      uintptr
-	size      int32
-	idle      uintptr // memory DCs holding the two looks
-	listening uintptr
-	showing   uintptr
+	a       *app
+	hwnd    uintptr
+	size    int32
+	idle    uintptr // memory DC holding the bubble's picture
+	showing uintptr
 
 	down, dragging bool
 	startCur       [2]int32
 	startWin       [2]int32
-	front          uintptr // the app in front when the bubble was pressed ("this")
 }
 
 var bubble *bubbleWin
@@ -93,26 +87,6 @@ func bubbleRefresh(a *app) {
 	}
 }
 
-// bubbleListening switches the bubble's look (from any goroutine).
-func bubbleListening(on bool) {
-	if t := theTray; t != nil && t.hwnd != 0 {
-		v := uintptr(0)
-		if on {
-			v = 1
-		}
-		pPostMessage.Call(t.hwnd, wmBubbleLook, v, 0)
-	}
-}
-
-// lastFrontInfo: the window last in front (not LAN Share's), for "send this".
-func lastFrontInfo() openWindowInfo {
-	if lastFront == 0 {
-		return openWindowInfo{}
-	}
-	return frontWindowInfo(lastFront)
-}
-
-// On the tray thread.
 func (t *tray) bubbleUpdate() {
 	t.a.mu.Lock()
 	on := !t.a.settings.NoBubble
@@ -166,7 +140,6 @@ func (b *bubbleWin) create() bool {
 		return false
 	}
 	b.idle = b.bitmap(renderBubble(img, int(b.size), false))
-	b.listening = b.bitmap(renderBubble(img, int(b.size), true))
 	b.showing = b.idle
 	logf("bubble: shown at %d,%d (%dpx)", x, y, b.size)
 	return true
@@ -236,32 +209,17 @@ func (b *bubbleWin) draw(dc uintptr) {
 		uintptr(unsafe.Pointer(&src)), 0, uintptr(*(*uint32)(unsafe.Pointer(&blend))), ulwAlpha)
 }
 
-func rootOf(h uintptr) uintptr {
-	if r, _, _ := pGetAncestor.Call(h, gaRoot); r != 0 {
-		return r
-	}
-	return h
-}
-
 func (b *bubbleWin) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	switch message {
 	case wmMouseActivate:
 		return maNoActivate // clicking it never takes the focus from your app
-	case wmLButtonDown, wmRButtonDown:
-		h, _, _ := pGetForegroundWindow.Call()
-		if h = rootOf(h); h != 0 && h != hwnd && !ignoredWindow(h) {
-			b.front = h
-		} else {
-			b.front = lastFront
-		}
-		if message == wmLButtonDown {
-			b.down, b.dragging = true, false
-			pGetCursorPos.Call(uintptr(unsafe.Pointer(&b.startCur)))
-			var r [4]int32
-			user32.NewProc("GetWindowRect").Call(hwnd, uintptr(unsafe.Pointer(&r)))
-			b.startWin = [2]int32{r[0], r[1]}
-			pSetCapture.Call(hwnd)
-		}
+	case wmLButtonDown:
+		b.down, b.dragging = true, false
+		pGetCursorPos.Call(uintptr(unsafe.Pointer(&b.startCur)))
+		var r [4]int32
+		user32.NewProc("GetWindowRect").Call(hwnd, uintptr(unsafe.Pointer(&r)))
+		b.startWin = [2]int32{r[0], r[1]}
+		pSetCapture.Call(hwnd)
 		return 0
 	case wmMouseMove:
 		if !b.down {
@@ -296,9 +254,8 @@ func (b *bubbleWin) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr
 			logf("bubble: moved to %d,%d", x, y)
 			return 0
 		}
-		front := b.front
 		logf("bubble: clicked")
-		go b.a.assistListen(func() openWindowInfo { return frontWindowInfo(front) })
+		b.menu(hwnd)
 		return 0
 	case wmRButtonUp:
 		b.menu(hwnd)
@@ -326,9 +283,7 @@ func (b *bubbleWin) menu(hwnd uintptr) {
 		p, _ := syscall.UTF16PtrFromString(text)
 		pAppendMenu.Call(m, mfString, id, uintptr(unsafe.Pointer(p)))
 	}
-	add(1, "Talk to LAN Share\t"+voiceKeyName)
 	add(2, "Send files…")
-	add(3, "Send what's open\t"+hotkeyComment)
 	var phones []string
 	var ids []string
 	for _, s := range b.a.tracker.Snapshot() {
@@ -347,19 +302,14 @@ func (b *bubbleWin) menu(hwnd uintptr) {
 	pSetForegroundWin.Call(hwnd) // so the menu closes when clicking elsewhere
 	cmd, _, _ := pTrackPopupMenu.Call(m, tpmBottom|tpmRightBtn|tpmReturnCmd, uintptr(pt[0]), uintptr(pt[1]), 0, hwnd, 0)
 	pDestroyMenu.Call(m)
-	front := b.front
 	a := b.a
 	switch {
-	case cmd == 1:
-		go a.assistListen(func() openWindowInfo { return frontWindowInfo(front) })
 	case cmd == 2:
 		go func() {
 			if paths, err := pickFiles(); err == nil && len(paths) > 0 {
 				a.handoff(paths)
 			}
 		}()
-	case cmd == 3:
-		go a.sendFront(front)
 	case cmd == 4:
 		go a.showWindow()
 	case cmd == 5:
@@ -391,8 +341,8 @@ func appendInt(b []byte, n int) []byte {
 	return append(b, byte('0'+n%10))
 }
 
-// renderBubble draws the bubble: a soft shadow, the app icon in a circle with smooth
-// edges, and (listening) a red ring. Premultiplied BGRA, top-down.
+// renderBubble draws the bubble: a soft shadow and the app icon in a circle with smooth
+// edges (listening: a red ring, unused for now). Premultiplied BGRA, top-down.
 func renderBubble(icon image.Image, size int, listening bool) []byte {
 	px := make([]byte, size*size*4)
 	s := float64(size)
@@ -455,5 +405,3 @@ func renderBubble(icon image.Image, size int, listening bool) []byte {
 	}
 	return px
 }
-
-var _ = time.Second

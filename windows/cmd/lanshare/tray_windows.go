@@ -38,34 +38,33 @@ var (
 )
 
 const (
-	wmApp        = 0x8000
-	wmTray       = wmApp + 1
-	wmNotify     = wmApp + 2 // our own: show a pending notification (posted from any goroutine)
-	wmTip        = wmApp + 3
-	wmCommand    = 0x0111
-	wmLButtonUp  = 0x0202
-	wmRButtonUp  = 0x0205
-	wmContext    = 0x007B
-	nimAdd       = 0
-	nimModify    = 1
-	nimDelete    = 2
-	nimSetVer    = 4
-	nifMessage   = 0x1
-	nifIcon      = 0x2
-	nifTip       = 0x4
-	nifInfo      = 0x10
-	niifUser     = 0x4
-	niifNoSound  = 0x10
-	tpmBottom    = 0x20
-	tpmRightBtn  = 0x2
-	mfString     = 0x0
-	mfSeparator  = 0x800
-	menuOpen     = 1
-	menuPair     = 2
-	menuQuit     = 3
-	menuSendOpen = 4
-	menuBubble   = 5
-	hwndMessage  = ^uintptr(2) // HWND_MESSAGE (-3): a window that is never shown
+	wmApp       = 0x8000
+	wmTray      = wmApp + 1
+	wmNotify    = wmApp + 2 // our own: show a pending notification (posted from any goroutine)
+	wmTip       = wmApp + 3
+	wmCommand   = 0x0111
+	wmLButtonUp = 0x0202
+	wmRButtonUp = 0x0205
+	wmContext   = 0x007B
+	nimAdd      = 0
+	nimModify   = 1
+	nimDelete   = 2
+	nimSetVer   = 4
+	nifMessage  = 0x1
+	nifIcon     = 0x2
+	nifTip      = 0x4
+	nifInfo     = 0x10
+	niifUser    = 0x4
+	niifNoSound = 0x10
+	tpmBottom   = 0x20
+	tpmRightBtn = 0x2
+	mfString    = 0x0
+	mfSeparator = 0x800
+	menuOpen    = 1
+	menuPair    = 2
+	menuQuit    = 3
+	menuBubble  = 5
+	hwndMessage = ^uintptr(2) // HWND_MESSAGE (-3): a window that is never shown
 )
 
 type notifyIconData struct {
@@ -165,7 +164,6 @@ func (t *tray) create() bool {
 	r, _, _ := pRegisterWindowMsg.Call(uintptr(unsafe.Pointer(name)))
 	t.created = uint32(r)
 	t.icon = loadAppIcon()
-	registerSendHotkey(t.hwnd)
 	if !t.add() {
 		// No taskbar yet (starting at sign-in before Explorer, or a machine without one):
 		// keep going; "TaskbarCreated" adds the icon when the taskbar appears.
@@ -249,30 +247,6 @@ func (t *tray) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 	case message == wmBubble:
 		t.bubbleUpdate()
 		return 0
-	case message == wmBubbleLook:
-		if bubble != nil {
-			if wParam == 1 {
-				bubble.draw(bubble.listening)
-			} else {
-				bubble.draw(bubble.idle)
-			}
-		}
-		return 0
-	case message == wmHotkey && wParam == hotkeyVoiceID:
-		h, _, _ := pGetForegroundWindow.Call()
-		h = rootOf(h)
-		if h == 0 || ignoredWindow(h) {
-			h = lastFront
-		}
-		go t.a.assistListen(func() openWindowInfo { return frontWindowInfo(h) })
-		return 0
-	case message == wmHotkey && wParam == hotkeySendID:
-		h, _, _ := pGetForegroundWindow.Call()
-		if r, _, _ := pGetAncestor.Call(h, gaRoot); r != 0 {
-			h = r
-		}
-		go t.a.sendFront(h)
-		return 0
 	case message == wmCommand:
 		switch wParam & 0xFFFF {
 		case menuBubble:
@@ -282,8 +256,6 @@ func (t *tray) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 			go t.a.saveSettings()
 			t.bubbleUpdate()
 			t.a.hub.changed()
-		case menuSendOpen:
-			go t.a.sendFront(0)
 		case menuOpen:
 			go t.a.showWindow()
 		case menuPair:
@@ -307,7 +279,6 @@ func (t *tray) menu() {
 		pAppendMenu.Call(m, mfString, id, uintptr(unsafe.Pointer(p)))
 	}
 	add(menuOpen, "Open LAN Share")
-	add(menuSendOpen, "Send what's open\t"+hotkeyComment)
 	t.a.mu.Lock()
 	hidden := t.a.settings.NoBubble
 	t.a.mu.Unlock()

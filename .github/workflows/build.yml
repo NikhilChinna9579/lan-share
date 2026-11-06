@@ -39,15 +39,16 @@ jobs:
         run: |
           go install github.com/tc-hib/go-winres@v0.3.3
           go-winres simply --arch amd64 --icon assets/icon-256.png --manifest gui \
-            --product-name "LAN Share" --file-description "LAN Share" --original-filename lanshare.exe
+            --product-name "LAN Share" --file-description "LAN Share: send files between your phone and PC on your Wi-Fi" \
+            --original-filename lanshare.exe --product-version 0.6.0 --file-version 0.6.0 --copyright "Nikhil Chinna"
       - name: Build lanshare.exe
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: "0"
-        # -s -w strips debug info: a smaller .exe.
+        # Not stripped (-s -w): stripped Go programs trip antivirus heuristics far more often.
         # -H windowsgui: a windowed app, no console window.
-        run: go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${GITHUB_SHA::7} -X main.buildTime=$(date +%s)" -o lanshare.exe ./cmd/lanshare
+        run: go build -trimpath -ldflags "-H windowsgui -X main.version=${GITHUB_SHA::7} -X main.buildTime=$(date +%s)" -o lanshare.exe ./cmd/lanshare
       - uses: actions/upload-artifact@v4
         with:
           name: lanshare-windows
@@ -83,6 +84,7 @@ jobs:
   windows-native-e2e:
     name: Windows app end-to-end on real Windows
     if: inputs.windows_tests
+    needs: windows
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -94,6 +96,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # The exact .exe people download, scanned by Microsoft Defender with fresh definitions:
+      # if Defender would block it, the run fails here.
+      - uses: actions/download-artifact@v4
+        with:
+          name: lanshare-windows
+          path: release
+      - name: Microsoft Defender scan of the release .exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $mp = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
+          & $mp -SignatureUpdate 2>&1 | Select-Object -Last 2
+          try { Get-MpComputerStatus | Select-Object AMServiceEnabled, AMEngineVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Format-List } catch { "status: $_" }
+          $exe = (Resolve-Path release\lanshare.exe).Path
+          & $mp -Scan -ScanType 3 -File $exe -DisableRemediation 2>&1 | Select-Object -Last 5
+          $code = $LASTEXITCODE
+          try { Get-MpThreatDetection | Format-List ThreatID, Resources } catch {}
+          if ($code -eq 2) { Write-Error "Defender flagged lanshare.exe"; exit 1 }
+          if ($code -ne 0) { Write-Output "::warning::Defender couldn't scan here (exit $code); the scan didn't run"; exit 0 }
+          Write-Output "Defender: lanshare.exe is clean"
       - name: Build (console build, so the test can read its output)
         working-directory: windows
         shell: bash

@@ -284,33 +284,10 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return a.openRemote(in.Device, in.Folder, in.Path, in.Name, in.Size, in.Modified)
 	})
-	h("/api/assistant/listen", func(r *http.Request) (any, error) { // the window's mic button
-		var in struct {
-			Title  string
-			Recent []string
-		}
-		readJSON(r, &in)
-		front := func() openWindowInfo { return openWindowInfo{Title: in.Title, Recent: in.Recent} }
-		if in.Title == "" {
-			front = lastFrontInfo // the window that was in front before LAN Share's
-		}
-		a.assistListen(front)
-		return nil, nil
-	})
 	h("/api/assistant/say", func(r *http.Request) (any, error) { // typed in the window (and tests)
-		var in struct {
-			Text, Title string
-			Recent      []string
-		}
+		var in struct{ Text string }
 		if err := readJSON(r, &in); err != nil || strings.TrimSpace(in.Text) == "" {
 			return nil, fmt.Errorf("type a command")
-		}
-		if in.Title != "" {
-			a.assistSet(func(s *assistState) {
-				s.frontF = func() openWindowInfo { return openWindowInfo{Title: in.Title, Recent: in.Recent} }
-			})
-		} else {
-			a.assistSet(func(s *assistState) { s.frontF = lastFrontInfo })
 		}
 		go a.assistHeard(in.Text)
 		return nil, nil
@@ -322,20 +299,6 @@ func serveAPI(a *app, ln net.Listener) {
 			return nil, err
 		}
 		return nil, a.assistPick(in.I)
-	})
-	h("/api/sendopen", func(r *http.Request) (any, error) { // "Send what's open"
-		var in struct {
-			Title             string
-			Selection, Recent []string
-		}
-		if err := readJSON(r, &in); err != nil {
-			return nil, err
-		}
-		if in.Title == "" && len(in.Selection) == 0 { // the window last in front (Windows)
-			go a.sendFront(0)
-			return nil, nil
-		}
-		return nil, a.sendWhatsOpen(openWindowInfo{Title: in.Title, Selection: in.Selection, Recent: in.Recent})
 	})
 	h("/api/reopen", func(r *http.Request) (any, error) {
 		var in struct{ ID string }

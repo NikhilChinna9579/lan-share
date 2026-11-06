@@ -1,7 +1,6 @@
 package main
 
-// The laptop's assistant: the bubble's microphone (or Ctrl+Alt+Space), or typed in the
-// window. It understands the same sentences as the phone's assistant ("send this to my
+// The laptop's assistant, typed in the window. It understands the same sentences as the phone's assistant ("send this to my
 // phone", "get the latest photo from my phone", "paste from my phone"), says what it's
 // about to do, waits 2 seconds for a Cancel, then does it. Missing details become a
 // question with buttons ("Which phone?").
@@ -31,10 +30,8 @@ type assistState struct {
 	Until   time.Time `json:"until,omitempty"` // "ready": does it at this time unless cancelled
 	At      time.Time `json:"at"`
 
-	gen    int            // bumped by every new step: older timers/answers are ignored
-	choose []func()       // what each option does
-	front  openWindowInfo // the window in front when listening began ("this")
-	frontF func() openWindowInfo
+	gen    int      // bumped by every new step: older timers/answers are ignored
+	choose []func() // what each option does
 }
 
 const assistWait = 2 * time.Second
@@ -49,7 +46,6 @@ func (a *app) assistSet(f func(s *assistState)) int {
 	f(a.assist)
 	a.assist.At = time.Now()
 	gen := a.assist.gen
-	bubbleListening(a.assist.Mode == "listening")
 	logf("assistant: %s: %s %s", a.assist.Mode, a.assist.Title, a.assist.Detail)
 	a.mu.Unlock()
 	a.hub.changed()
@@ -65,50 +61,13 @@ func (a *app) assistGen() int {
 	return a.assist.gen
 }
 
-// assistListen starts listening (voice) with the window that was in front.
-func (a *app) assistListen(front func() openWindowInfo) {
-	gen := a.assistSet(func(s *assistState) {
-		s.Mode, s.Title, s.Detail, s.Heard = "listening", "Listening…", "Say e.g. “send this to my phone”", ""
-		s.frontF = front
-	})
-	a.showWindow()
-	go func() {
-		text, err := listen(a.speechPhrases())
-		if a.assistGen() != gen { // cancelled, or typed instead
-			return
-		}
-		switch {
-		case err != nil:
-			a.assistSet(func(s *assistState) {
-				s.Mode, s.Title, s.Detail = "error", "Can't listen", err.Error()+" You can type the command instead."
-			})
-		case text == "":
-			a.assistSet(func(s *assistState) {
-				s.Mode, s.Title, s.Detail = "error", "Didn't catch that", "Try again, or type it."
-			})
-		default:
-			a.assistHeard(text)
-		}
-	}()
-}
-
-// assistHeard handles a sentence (heard or typed).
+// assistHeard handles a typed sentence.
 func (a *app) assistHeard(text string) {
-	a.mu.Lock()
-	var frontF func() openWindowInfo
-	if a.assist != nil {
-		frontF = a.assist.frontF
-	}
-	a.mu.Unlock()
-	var front openWindowInfo
-	if frontF != nil {
-		front = frontF()
-	}
 	names := a.phoneNames()
 	c := commands.Parse(text, names)
 	logf("assistant: heard %q → %+v", text, c)
 	a.assistSet(func(s *assistState) {
-		s.Mode, s.Heard, s.Title, s.Detail, s.front = "thinking", text, "One moment…", "", front
+		s.Mode, s.Heard, s.Title, s.Detail = "thinking", text, "One moment…", ""
 	})
 	if c.Kind == commands.Unknown {
 		a.assistSet(func(s *assistState) {
@@ -285,14 +244,7 @@ func (a *app) isOnline(id string) bool {
 func (a *app) filesFor(c commands.Command) ([]fileInfo, error) {
 	switch c.What {
 	case commands.This:
-		a.mu.Lock()
-		front := a.assist.front
-		a.mu.Unlock()
-		paths, _, err := resolveOpen(front, a.searchByName)
-		if err != nil {
-			return nil, errors.New("couldn't tell which file is open. Select it in File Explorer, or say its name")
-		}
-		return statFiles(paths), nil
+		return nil, errors.New("type the file's name (e.g. “send report.pdf to my phone”), or use Send files")
 	case commands.Named:
 		var best string
 		score := 0
@@ -487,20 +439,15 @@ func (a *app) pasteFromPhone(id string) (int, error) {
 	return n, nil
 }
 
-// speechPhrases: whole sentences the recogniser should expect (it also takes free speech).
-func (a *app) speechPhrases() []string {
-	phones := append([]string{"my phone", "the phone"}, a.phoneNames()...)
+// searchByName finds a file by name in the shared folders.
+func (a *app) searchByName(name string) []string {
 	var out []string
-	for _, p := range phones {
-		for _, t := range []string{
-			"send this to %s", "send this file to %s", "send it to %s",
-			"send the latest download to %s", "send my latest screenshot to %s", "send the latest photo to %s",
-			"send the latest video to %s", "send my clipboard to %s", "send what I copied to %s",
-			"get the latest photo from %s", "get the latest screenshot from %s", "get the latest video from %s",
-			"get the latest download from %s", "paste from %s", "is %s online",
-		} {
-			out = append(out, fmt.Sprintf(t, p))
+	for _, h := range a.folders.Search(name, 20) {
+		root, ok := a.folders.Path(h.Folder)
+		if !ok {
+			continue
 		}
+		out = append(out, filepath.Join(root, filepath.FromSlash(h.Path), h.Name))
 	}
 	return out
 }

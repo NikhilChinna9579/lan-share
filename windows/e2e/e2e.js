@@ -71,19 +71,7 @@ async function step(name, fn) {
   const laptopData = path.join(work, "laptop");
   const openLog = path.join(work, "opened.txt"); // what the laptop "opened" (instead of launching apps)
   process.env.LANSHARE_OPEN_LOG = openLog;
-  process.env.LANSHARE_FAKE_HEARD = "get the latest photo from my phone"; // stands in for the microphone
   const win = process.platform === "win32";
-  if (win) {
-    // Real Windows: the real speech recogniser listens to this sentence, spoken by Windows'
-    // own text-to-speech into a WAV file (there's no microphone on a test machine).
-    const wav = path.join(work, "said.wav");
-    try {
-      execFileSync("powershell", ["-NoProfile", "-Command",
-        `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = -1; ` +
-        `$s.SetOutputToWaveFile('${wav}'); $s.Speak('get the latest photo from my phone'); $s.Dispose()`], { timeout: 60_000 });
-      process.env.LANSHARE_SPEECH_WAV = wav;
-    } catch (e) { console.log("note: couldn't make the test recording: " + e.message); }
-  }
   // Windows: is the bubble window on screen?
   let bubbleSaw = "";
   const bubbleVisible = () => (bubbleSaw = execFileSync("powershell", ["-NoProfile", "-Command",
@@ -301,25 +289,11 @@ async function step(name, fn) {
       await waitFor("saved copy in Downloads", () => fs.existsSync(saved) && fs.statSync(saved).size === 460_000);
     });
 
-    await step("“Send what's open”: the file in the window in front goes to the send sheet", async () => {
-      const f = path.join(work, "Trip plan.docx");
-      fs.writeFileSync(f, crypto.randomBytes(40_000));
-      // As if Word showed "Trip plan - Word" and Windows listed the file as recently opened.
-      await page.evaluate((f) => api("/api/sendopen", {title: "Trip plan - Word", recent: [f]}), f);
-      await page.locator(".sheet .r", { hasText: "Trip plan.docx" }).waitFor();
-      await page.locator('[data-act="root"]', { hasText: "Downloads" }).click();
-      await page.locator('[data-act="dosend"]').click();
-      const dest = path.join(phoneInbox, "Trip plan.docx");
-      await waitFor("the open file on the phone", () => fs.existsSync(dest) && fs.statSync(dest).size === 40_000, 15_000);
-      // Can't tell: says so instead of sending something else.
-      await page.evaluate(() => api("/api/sendopen", {title: "Untitled - Paint"}).catch(() => {}));
-      await page.getByText("Couldn't tell which file is open").first().waitFor();
-    });
-
-    await step("assistant: typed “send this to my phone” sends the file in front (after 2 s)", async () => {
-      const f = path.join(work, "Trip notes.txt");
-      fs.writeFileSync(f, crypto.randomBytes(12_000));
-      await page.evaluate((f) => api("/api/assistant/say", {text: "send this to my phone", title: "Trip notes.txt - Notepad", recent: [f]}), f);
+    await step("assistant: typed “send Trip notes.txt to my phone” sends it (after 2 s)", async () => {
+      fs.writeFileSync(path.join(laptopDownloads, "Trip notes.txt"), crypto.randomBytes(12_000));
+      await page.locator("#askBtn").click();
+      await page.locator("#asay").fill("send trip notes dot txt to my phone");
+      await page.locator("#asay").press("Enter");
       const card = page.locator(".card.assist");
       await card.getByText("Sending Trip notes.txt to Nikhil's phone").first().waitFor();
       await settle(); await page.screenshot({ path: path.join(out, "w08j-assistant.png") });
@@ -328,33 +302,31 @@ async function step(name, fn) {
     });
 
     await step("assistant: Cancel within 2 s stops it", async () => {
-      const f = path.join(work, "Not this.txt");
-      fs.writeFileSync(f, "x".repeat(500));
-      await page.evaluate((f) => api("/api/assistant/say", {text: "send this to my phone", title: "Not this.txt - Notepad", recent: [f]}), f);
+      fs.writeFileSync(path.join(laptopDownloads, "Not this.txt"), "x".repeat(500));
+      await page.evaluate(() => api("/api/assistant/say", {text: "send not this.txt to my phone"}));
       await page.locator('.card.assist [data-act="acancel"]').click();
       await sleep(3000);
       if (fs.existsSync(path.join(phoneInbox, "Not this.txt"))) throw new Error("sent despite Cancel");
     });
 
-    await step("assistant: the 🎤 button, “get the latest photo from my phone”", async () => {
+    await step("assistant: “get the latest photo from my phone”", async () => {
       const pics = path.join(phoneData, "inbox", "Pictures");
       fs.mkdirSync(pics, { recursive: true });
       fs.writeFileSync(path.join(pics, "IMG_old.jpg"), crypto.randomBytes(5_000));
       await sleep(30);
       fs.writeFileSync(path.join(pics, "IMG_newest.jpg"), crypto.randomBytes(7_000));
       fs.rmSync(path.join(laptopDownloads, "IMG_newest.jpg"), { force: true });
-      await page.locator("#micBtn").click();
-      const card = page.locator(".card.assist");
-      if (win) { // the real recogniser: allow for its start-up, and say so if Windows has none
-        await card.getByText(/Getting IMG_newest\.jpg|Can't listen|Didn't catch/).first().waitFor({ timeout: 45_000 });
-        const t = await card.innerText();
-        if (/isn't installed/.test(t)) { log("      note: this Windows has no English speech recogniser; voice not tested here"); return; }
-        if (!/Getting IMG_newest\.jpg/.test(t)) throw new Error("voice: " + t.replace(/\s+/g, " "));
-      } else {
-        await card.getByText("Getting IMG_newest.jpg from Nikhil's phone").first().waitFor({ timeout: 10_000 });
-      }
+      await page.locator("#askBtn").click();
+      await page.locator("#asay").fill("get the latest photo from my phone");
+      await page.locator('[data-act="asay"]').click();
+      await page.locator(".card.assist").getByText("Getting IMG_newest.jpg from Nikhil's phone").first().waitFor({ timeout: 10_000 });
       const got = path.join(laptopDownloads, "IMG_newest.jpg");
       await waitFor("the newest photo on the laptop", () => fs.existsSync(got) && fs.statSync(got).size === 7_000, 15_000);
+    });
+
+    await step("assistant: “send this” says to name the file", async () => {
+      await page.evaluate(() => api("/api/assistant/say", {text: "send this to my phone"}));
+      await page.locator(".card.assist").getByText("type the file's name", { exact: false }).waitFor();
     });
 
     await step("assistant: nonsense gets a helpful answer", async () => {

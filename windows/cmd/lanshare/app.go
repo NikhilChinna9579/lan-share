@@ -1046,7 +1046,7 @@ func (a *app) stateJSON() []byte {
 			"installed": isInstalled(), "canInstall": installSupported() && !isInstalled(),
 			"ask": a.settings.Ask, "browse": !a.settings.NoBrowse, "keyProtected": identity.Protected(),
 			"clip": !a.settings.NoClip, "clipNow": a.settings.ClipNow,
-			"bubble": !a.settings.NoBubble, "bubbleSupported": bubbleSupported, "voiceKey": "Ctrl+Alt+Space",
+			"bubble": !a.settings.NoBubble, "bubbleSupported": bubbleSupported,
 		},
 		"clipIn":    a.clipIn,
 		"assistant": a.assist,
