@@ -300,6 +300,10 @@ func serveAPI(a *app, ln net.Listener) {
 		}
 		return nil, a.assistPick(in.I)
 	})
+	h("/api/history/clear", func(*http.Request) (any, error) { // "Clear" on Recent activity
+		a.clearHistory()
+		return nil, nil
+	})
 	h("/api/reopen", func(r *http.Request) (any, error) {
 		var in struct{ ID string }
 		if err := readJSON(r, &in); err != nil {

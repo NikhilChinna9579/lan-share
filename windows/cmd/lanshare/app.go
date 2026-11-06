@@ -1188,3 +1188,20 @@ func builtStamp() string {
 	}
 	return time.Unix(secs, 0).Local().Format("2 Jan 2006, 3:04 PM")
 }
+
+// clearHistory empties Recent activity (and the finished transfer cards).
+func (a *app) clearHistory() {
+	a.mu.Lock()
+	a.activity = nil
+	keep := a.transfers[:0]
+	for _, t := range a.transfers {
+		if t.State == "running" {
+			keep = append(keep, t)
+		}
+	}
+	a.transfers = keep
+	a.mu.Unlock()
+	os.WriteFile(filepath.Join(a.dataDir, "history.json"), []byte("[]"), 0o600)
+	logf("history: cleared")
+	a.hub.changed()
+}

@@ -92,6 +92,7 @@ class MainActivity : Activity() {
         emptyState = findViewById(R.id.emptyState)
         recentLabel = findViewById(R.id.recentLabel)
         recentList = findViewById(R.id.recentList)
+        findViewById<View>(R.id.recentClear).setOnClickListener { Hub.clearHistory() }
 
         val steps = findViewById<LinearLayout>(R.id.steps)
         listOf("Open LAN Share on your laptop", "Click “Show pairing code”", "Tap Scan QR code below and scan it").forEachIndexed { i, text ->

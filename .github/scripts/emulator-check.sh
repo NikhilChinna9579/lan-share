@@ -531,6 +531,16 @@ else
   log "skip  release check (signing key not set up yet)"
 fi
 
+# ---------------------------------------------------------------- 11c. Clear on Recent activity
+mark; app 3
+if until_ok 10 "tap_text Clear"; then
+  expect 10 'history: cleared' "Clear empties Recent activity"
+  mark; app 3
+  expect 15 'history: loaded 0 items' "…and it stays empty after a restart"
+else
+  fail "Clear button on Recent activity"
+fi
+
 # ---------------------------------------------------------------- 12. no crashes
 A logcat -d -b crash > "$OUT/crashes.txt" 2>&1
 if grep -q "com.nikhil.lanshare" "$OUT/crashes.txt"; then fail "app crashed (see crashes.txt)"; else pass "no crashes"; fi

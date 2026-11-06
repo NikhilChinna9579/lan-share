@@ -117,6 +117,16 @@ object Hub {
     @Synchronized
     fun recent(): List<Item> = items.toList()
 
+    /** "Clear" on the Recent activity list (and finished transfer cards). */
+    @Synchronized
+    fun clearHistory() {
+        items.clear()
+        transfers.values.removeAll { it.state != State.RUNNING && it.state != State.ASKING }
+        save()
+        android.util.Log.i("LanShare", "history: cleared")
+        changed()
+    }
+
     fun inboundContact(id: String) {
         val was = inbound.put(id, System.currentTimeMillis())
         if (was == null || System.currentTimeMillis() - was > 15_000) changed()

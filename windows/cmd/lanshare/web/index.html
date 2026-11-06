@@ -126,6 +126,8 @@
   .assist .ask { display:flex; gap:8px; margin-top:10px; }
   .assist .ask input { flex:1; }
   .assist .bar i { transition:width linear; }
+  h2.hrow { display:flex; align-items:center; justify-content:space-between; }
+  h2.hrow .btn { text-transform:none; letter-spacing:0; }
   .cliptext { margin-top:4px; font-size:13px; color:var(--mute); white-space:pre-wrap; word-break:break-word;
     display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   .cliprow { display:flex; align-items:center; gap:6px; margin:0 4px 10px; }
@@ -179,7 +181,7 @@
   <h2 id="phonesLabel">Your phones</h2>
   <div id="devices"></div>
 
-  <h2>Recent activity</h2>
+  <h2 class="hrow">Recent activity <button class="btn ghost small" id="clearHist" data-act="clearhist">Clear</button></h2>
   <div class="card act" id="activity"></div>
   <p class="small muted center" id="buildStamp" style="opacity:.7;margin:18px 0 6px"></p>
 </div>
@@ -409,6 +411,7 @@ function render() {
 
   // Activity, newest first.
   const kinds = {received:["down","ok"], sent:["up","ok"], paired:["link",""], online:["phone","ok"], offline:["phone","off"], error:["error","bad"], info:["info",""]};
+  $("clearHist").classList.toggle("gone", !S.activity.length);
   $("buildStamp").textContent = `LAN Share ${S.me.version}` + (S.me.built ? ` · built ${S.me.built}` : "");
   $("activity").innerHTML = S.activity.length ? S.activity.slice(0, 30).map((a) => {
     const [ic, cls] = kinds[a.kind] || ["info", ""];
@@ -690,6 +693,7 @@ document.addEventListener("click", async (ev) => {
       case "apick": return api("/api/assistant/pick", {i: +t.dataset.i});
       case "asay": { const v = ($("asay").value || "").trim(); if (v) { askOpen = false; return api("/api/assistant/say", {text: v}); } return; }
       case "togglebubble": return api("/api/settings", {bubble: !S.me.bubble});
+      case "clearhist": return api("/api/history/clear", {});
       case "toggleclipnow": return api("/api/settings", {clipNow: !S.me.clipNow});
       case "togglebrowse": return api("/api/settings", {browse: !S.me.browse});
       case "setdefault": return api("/api/folders/default", {key: t.dataset.key});

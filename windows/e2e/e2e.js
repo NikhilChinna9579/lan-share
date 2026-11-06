@@ -613,6 +613,14 @@ async function step(name, fn) {
       await page.goto(url2);
       await page.getByText("Sent Holiday photos.zip to Nikhil's phone").first().waitFor();
     });
+
+    await step("Clear empties Recent activity, and it stays empty after a restart", async () => {
+      await page.locator("#clearHist").click();
+      await waitFor("activity cleared", async () => (await page.evaluate(() => api("/api/state", undefined, "GET"))).activity.length === 0);
+      if (await page.locator("#clearHist").isVisible()) throw new Error("Clear still shown with nothing to clear");
+      const h = JSON.parse(fs.readFileSync(path.join(laptopData, "history.json"), "utf8"));
+      if (h.length !== 0) throw new Error("history.json still has " + h.length + " items");
+    });
   } catch (e) {
     if (!failures) { failures++; log(`FAIL  ${e.message}`); } // a crash outside any step still fails the run
     if (page) await page.screenshot({ path: path.join(out, "failure.png") }).catch(() => {});
