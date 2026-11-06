@@ -7,6 +7,7 @@ package main
 import (
 	"log"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -114,10 +115,15 @@ type tray struct {
 	icon    uintptr
 	pending chan [2]string // notifications waiting for the tray thread
 	tips    chan string
-	created uint32 // "TaskbarCreated": Explorer restarted, add the icon again
+	created uint32       // "TaskbarCreated": Explorer restarted, add the icon again
+	click   atomic.Value // func(): what clicking the latest notification does (nil: open the window)
 }
 
 var theTray *tray
+
+type clickFn struct{ f func() } // atomic.Value needs one concrete type
+
+const ninBalloonUserClick = 0x0405 // NIN_BALLOONUSERCLICK: the notification was clicked
 
 // startTray adds the icon; everything Win32 runs on one locked OS thread.
 func startTray(a *app) {
@@ -197,6 +203,12 @@ func (t *tray) wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uin
 			go t.a.showWindow()
 		case wmRButtonUp, wmContext:
 			t.menu()
+		case ninBalloonUserClick:
+			if f, _ := t.click.Load().(clickFn); f.f != nil {
+				go f.f()
+			} else {
+				go t.a.showWindow()
+			}
 		}
 		return 0
 	case message == wmNotify:
@@ -270,11 +282,15 @@ func (t *tray) menu() {
 }
 
 // notify shows a Windows notification (from any goroutine).
-func notify(title, text string) {
+func notify(title, text string) { notifyClick(title, text, nil) }
+
+// notifyClick shows a notification; clicking it runs onClick (nil: opens the window).
+func notifyClick(title, text string, onClick func()) {
 	t := theTray
 	if t == nil || t.hwnd == 0 {
 		return
 	}
+	t.click.Store(clickFn{onClick})
 	select {
 	case t.pending <- [2]string{title, text}:
 		pPostMessage.Call(t.hwnd, wmNotify, 0, 0)

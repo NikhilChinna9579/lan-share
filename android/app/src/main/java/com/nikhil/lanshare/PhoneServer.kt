@@ -132,7 +132,7 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                     if (!Clip.enabled(ctx) || text.toByteArray().size > Clip.MAX) {
                         conn.send(JSONObject().put("type", "error").put("code", "not_allowed").put("message", "clipboard sharing is off on $myName"))
                     } else {
-                        Clip.write(ctx, text, peer!!.name)
+                        Clip.incoming(ctx, text, peer!!.name, msg.optBoolean("auto"))
                         conn.send(JSONObject().put("type", "clip_ok"))
                     }
                 }

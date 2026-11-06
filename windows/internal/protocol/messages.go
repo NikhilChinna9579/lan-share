@@ -162,6 +162,9 @@ type SearchResponse struct {
 type ClipPush struct {
 	Type string `json:"type"` // "clip_push"
 	Text string `json:"text"`
+	// Auto: copied there and sent by itself (not a deliberate "send what's copied"),
+	// so the receiver may offer it with a Copy button instead of replacing its clipboard.
+	Auto bool `json:"auto,omitempty"`
 }
 
 // ClipRequest asks for the other device's clipboard ("paste from laptop").

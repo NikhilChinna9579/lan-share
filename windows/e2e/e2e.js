@@ -347,6 +347,22 @@ async function step(name, fn) {
       await waitFor("restored", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "https://example.com/from-phone");
     });
 
+    await step("shared clipboard: copied on the phone by itself: offered with Copy, not pasted over", async () => {
+      await page.evaluate(() => api("/api/clip/set", {text: "keep me"}));
+      start("phone-clip-auto", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47862", "-clip-push", "Auto copy 5512", "-clip-auto"]);
+      const card = page.locator(".card.clip", { hasText: "Copied on Nikhil's phone" });
+      await card.getByText("Auto copy 5512").waitFor({ timeout: 10_000 });
+      if ((await page.evaluate(() => api("/api/clip", {}))).text !== "keep me") throw new Error("replaced the clipboard without asking");
+      await settle(); await page.screenshot({ path: path.join(out, "w08i2-clip-offered.png") });
+      await card.locator('[data-act="clipcopy"]').click();
+      await waitFor("copied after clicking Copy", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "Auto copy 5512");
+      // "Paste right away" setting: straight in.
+      await page.evaluate(() => api("/api/settings", {clipNow: true}));
+      start("phone-clip-auto2", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47863", "-clip-push", "Auto copy 6623", "-clip-auto"]);
+      await waitFor("pasted right away", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "Auto copy 6623", 10_000);
+      await page.evaluate(() => api("/api/settings", {clipNow: false}));
+    });
+
     await step('shared clipboard: "Paste from this phone"', async () => {
       // LAN Share isn't on screen on the phone: a clear message.
       await page.locator('.dev [data-act="devmenu"]').first().click();

@@ -337,9 +337,14 @@ func (c *Conn) Search(query string) ([]protocol.SearchHit, error) {
 	return resp.Results, err
 }
 
-// PushClip puts text on the device's clipboard.
-func (c *Conn) PushClip(text string) error {
-	if err := c.send(protocol.ClipPush{Type: "clip_push", Text: text}); err != nil {
+// PushClip puts text on the device's clipboard (a deliberate send).
+func (c *Conn) PushClip(text string) error { return c.pushClip(text, false) }
+
+// PushClipAuto sends text copied here by itself; the device may offer it with a Copy button.
+func (c *Conn) PushClipAuto(text string) error { return c.pushClip(text, true) }
+
+func (c *Conn) pushClip(text string, auto bool) error {
+	if err := c.send(protocol.ClipPush{Type: "clip_push", Text: text, Auto: auto}); err != nil {
 		return err
 	}
 	return c.expect(nil, "clip_ok")

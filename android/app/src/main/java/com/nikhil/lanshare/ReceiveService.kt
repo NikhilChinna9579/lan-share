@@ -68,11 +68,13 @@ class ReceiveService : Service() {
         if (DeviceStore.all(this).isEmpty() && !PhonePairing.open() && !Bubble.enabled(this)) stopSelf()
         Bubble.current?.refresh() // the bubble setting or permission may have changed
         updateWake()
+        if (ClipWatcher.wanted(this)) ClipWatcher.start(this) else ClipWatcher.stop(this)
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
+        ClipWatcher.stop(this)
         wake?.stop()
         wake = null
         Bubble.current?.hide()

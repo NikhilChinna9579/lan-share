@@ -325,10 +325,11 @@ func serveAPI(a *app, ln net.Listener) {
 	})
 	h("/api/settings", func(r *http.Request) (any, error) {
 		var in struct {
-			Name   *string
-			Ask    *bool
-			Browse *bool
-			Clip   *bool
+			Name    *string
+			Ask     *bool
+			Browse  *bool
+			Clip    *bool
+			ClipNow *bool
 		}
 		if err := readJSON(r, &in); err != nil {
 			return nil, err
@@ -348,6 +349,9 @@ func serveAPI(a *app, ln net.Listener) {
 		if in.Clip != nil {
 			a.settings.NoClip = !*in.Clip
 		}
+		if in.ClipNow != nil {
+			a.settings.ClipNow = *in.ClipNow
+		}
 		a.mu.Unlock()
 		a.hub.changed()
 		return nil, a.saveSettings()
@@ -364,10 +368,7 @@ func serveAPI(a *app, ln net.Listener) {
 		return nil, clipboard.Write(in.Text)
 	})
 	h("/api/clip/again", func(*http.Request) (any, error) { // the clipboard card's Copy button
-		a.mu.Lock()
-		text := a.clipFull
-		a.mu.Unlock()
-		return nil, clipboard.Write(text)
+		return nil, a.copyOffered()
 	})
 	h("/api/clip/copy", func(r *http.Request) (any, error) { // testing: as if the person copied this
 		var in struct{ Text string }

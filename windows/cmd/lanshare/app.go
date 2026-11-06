@@ -74,6 +74,9 @@ type settings struct {
 	Ask      bool   `json:"askBeforeReceive"`   // ask before accepting files
 	NoBrowse bool   `json:"noBrowse,omitempty"` // phones may not list or get files from here
 	NoClip   bool   `json:"noClip,omitempty"`   // don't share the clipboard with phones
+	// ClipNow: text copied on a phone goes straight onto this clipboard. Off (the
+	// default): a notification and the window offer it with Copy.
+	ClipNow bool `json:"clipNow,omitempty"`
 }
 
 // clipNote is the last clipboard text that came from, or went to, a phone.
@@ -82,6 +85,8 @@ type clipNote struct {
 	Text   string    `json:"text"` // first 300 characters
 	Chars  int       `json:"chars"`
 	At     time.Time `json:"at"`
+	// Offered: not put on the clipboard yet; Copy (notification or window) does.
+	Offered bool `json:"offered,omitempty"`
 }
 
 // approval is an incoming transfer waiting for Accept or Decline.
@@ -329,27 +334,50 @@ func preview(text string) (string, int) {
 func (a *app) clipOn() bool { a.mu.Lock(); defer a.mu.Unlock(); return !a.settings.NoClip }
 
 // clipFromPhone: a phone sent text (its clipboard, or shared text): ready for Ctrl+V here.
-func (a *app) clipFromPhone(peerID, from, text string) bool {
+func (a *app) clipFromPhone(peerID, from, text string, auto bool) bool {
 	if !a.clipOn() {
 		return false
 	}
-	if err := clipboard.Write(text); err != nil {
-		log.Printf("clipboard: %v", err)
-		return false
+	a.mu.Lock()
+	ask := auto && !a.settings.ClipNow
+	a.mu.Unlock()
+	if !ask {
+		if err := clipboard.Write(text); err != nil {
+			log.Printf("clipboard: %v", err)
+			return false
+		}
 	}
 	p, n := preview(text)
 	a.mu.Lock()
-	a.clipIn = &clipNote{Device: from, Text: p, Chars: n, At: time.Now()}
+	a.clipIn = &clipNote{Device: from, Text: p, Chars: n, At: time.Now(), Offered: ask}
 	a.clipFull = text
 	a.mu.Unlock()
-	log.Printf("clipboard: %d characters from %s", n, from)
 	short, _ := preview(strings.Join(strings.Fields(text), " "))
 	if len([]rune(short)) > 80 {
 		short = string([]rune(short)[:80]) + "…"
 	}
-	go notify("Copied from "+from, short+" · paste with Ctrl+V")
+	if ask {
+		log.Printf("clipboard: %d characters from %s, offered (click to copy)", n, from)
+		go notifyClick("Copied on "+from, short+" · click to copy", func() { a.copyOffered() })
+	} else {
+		log.Printf("clipboard: %d characters from %s", n, from)
+		go notify("Copied from "+from, short+" · paste with Ctrl+V")
+	}
 	a.hub.changed()
 	return true
+}
+
+// copyOffered puts the last offered text on the clipboard (the notification click or Copy).
+func (a *app) copyOffered() error {
+	a.mu.Lock()
+	text := a.clipFull
+	if a.clipIn != nil {
+		a.clipIn.Offered = false
+	}
+	a.mu.Unlock()
+	a.hub.changed()
+	log.Printf("clipboard: copied what a phone offered")
+	return clipboard.Write(text)
 }
 
 // clipForPhone answers "paste from laptop".
@@ -404,7 +432,7 @@ func (a *app) pushCopy(text string, ids []string) {
 				return
 			}
 			defer c.Close()
-			if err := c.PushClip(text); err != nil {
+			if err := c.PushClipAuto(text); err != nil { // copied here: sent by itself
 				log.Printf("clipboard: to %s: %v", name, err)
 				return
 			}
@@ -1012,7 +1040,7 @@ func (a *app) stateJSON() []byte {
 			"logPath": a.logPath, "autostart": autostartEnabled(), "platform": platformName(),
 			"installed": isInstalled(), "canInstall": installSupported() && !isInstalled(),
 			"ask": a.settings.Ask, "browse": !a.settings.NoBrowse, "keyProtected": identity.Protected(),
-			"clip": !a.settings.NoClip,
+			"clip": !a.settings.NoClip, "clipNow": a.settings.ClipNow,
 		},
 		"clipIn":    a.clipIn,
 		"clipOut":   a.clipOut,

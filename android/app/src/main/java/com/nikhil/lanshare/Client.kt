@@ -132,9 +132,9 @@ object Client {
         }
 
     /** Puts text on the laptop's clipboard. */
-    fun pushClip(device: Device, myName: String, text: String) =
+    fun pushClip(device: Device, myName: String, text: String, auto: Boolean = false) =
         PeerConnection.open(device.host, device.port, device.id, myName).use { conn ->
-            conn.send(JSONObject().put("type", "clip_push").put("text", text))
+            conn.send(JSONObject().put("type", "clip_push").put("text", text).apply { if (auto) put("auto", true) })
             val r = conn.receive()
             if (r.optString("type") != "clip_ok") throw IllegalStateException(
                 if (r.optString("code") == "not_allowed") "${device.name} has clipboard sharing turned off." else "${device.name} didn't take it.")

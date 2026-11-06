@@ -181,7 +181,15 @@ expect 10 'served 1 files to DESKTOP-NIKHIL' "phone logs what it served"
 
 # ---------------------------------------------------------------- 4a. shared clipboard
 mark; api /api/clip/copy '{"text":"Meeting at 5pm ✓"}' >/dev/null
-expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars' "copied on the laptop: it's on the phone's clipboard"
+expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars, offered' "copied on the laptop: a notification with a Copy button (the default)"
+shade_open() { A shell cmd statusbar expand-notifications; sleep 2; }
+shade_open; shot 06b-clip-notification
+until_ok 10 "tap_text Copy" ; sleep 1; shade_closed
+expect 10 'clipboard: copied what came from DESKTOP-NIKHIL' "…Copy puts it on the phone's clipboard"
+run_hook ask_clip_off
+mark; api /api/clip/copy '{"text":"Straight in 9921"}' >/dev/null
+expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars \(on the clipboard\)' "with asking off: straight onto the phone's clipboard"
+run_hook ask_clip_on
 mark; hook demo.txt send_clip; app 3
 expect 20 'clipboard sent to DESKTOP-NIKHIL: [0-9]+ chars' "the phone sends what's copied"
 until_ok 10 "api /api/clip | grep -q 'Hello from the phone'" && pass "…and it's on the laptop's clipboard" || fail "phone's text on the laptop's clipboard"
@@ -199,9 +207,25 @@ until_ok 20 "api /api/clip | grep -q 'example.com/shared'" && pass "Share → LA
 run_hook "copy_only:Copied on the phone 4417"; sleep 2
 mark; app 3
 expect 15 'clipboard auto: [0-9]+ chars to .*DESKTOP-NIKHIL' "copied on the phone: sent by itself when LAN Share opens"
-until_ok 15 "api /api/clip | grep -q 'Copied on the phone 4417'" && pass "…and it's ready to paste on the laptop" || fail "auto-sent copy on the laptop"
+until_ok 15 "get /api/state | grep -q 'Copied on the phone 4417'" && pass "…and the laptop offers it (Copy button)" || fail "auto-sent copy offered on the laptop"
+api /api/clip | grep -q 'Copied on the phone 4417' && fail "the laptop replaced its clipboard without asking" || pass "…without replacing the laptop's clipboard"
+api /api/clip/again >/dev/null
+api /api/clip | grep -q 'Copied on the phone 4417' && pass "…Copy on the laptop puts it there" || fail "laptop Copy of the offered text"
 mark; app 3; sleep 3
 seen 'clipboard auto:' && fail "the same copy was sent again" || pass "…only once, not on every open"
+# The no-tap mode: the one-time permission from a computer, as a person would grant it.
+A shell pm grant $PKG android.permission.READ_LOGS
+A shell appops set $PKG SYSTEM_ALERT_WINDOW allow
+mark; app 4
+until_ok 5 "tap_text Allow" >/dev/null 2>&1   # Android 13+: "Allow LAN Share to access all device logs?"
+expect 20 'clipboard watcher: on' "with the permission: watching for copies in other apps"
+api /api/settings '{"clipNow":true}' >/dev/null   # the laptop's "paste right away" setting
+run_hook "bg_copy:Copied in another app 7781"
+expect 25 'clipboard watcher: copy seen' "a copy in another app is noticed, LAN Share in the background"
+until_ok 20 "api /api/clip | grep -q 'Copied in another app 7781'" && pass "…and it's on the laptop's clipboard with no tap" || fail "no-tap copy reached the laptop"
+api /api/settings '{"clipNow":false}' >/dev/null
+shot 06c-after-watch
+A shell appops set $PKG SYSTEM_ALERT_WINDOW deny
 bail_if_crashed "clipboard"
 
 # ---------------------------------------------------------------- 4b. folders, new folder, asking, browsing off

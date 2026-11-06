@@ -163,13 +163,14 @@ object Actions {
     // ------------------------------------------------------------- shared clipboard
 
     /** Sends text to the laptop's clipboard. [done] gets null on success, or what went wrong. */
-    fun sendClip(ctx: Context, d: Device, text: String, explain: (Throwable) -> String, done: (String?) -> Unit = {}) {
+    fun sendClip(ctx: Context, d: Device, text: String, explain: (Throwable) -> String, quiet: Boolean = false,
+                 auto: Boolean = false, done: (String?) -> Unit = {}) {
         val app = ctx.applicationContext
         worker.execute {
-            val r = runCatching { Client.pushClip(DeviceStore.get(app, d.id) ?: d, deviceName(app), text) }
+            val r = runCatching { Client.pushClip(DeviceStore.get(app, d.id) ?: d, deviceName(app), text, auto) }
             Log.i(TAG, "clipboard sent to ${d.name}: " + r.map { "${text.length} chars" }.getOrElse { "failed: $it" })
             r.onSuccess { Hub.add("sent", "Copied to ${d.name}'s clipboard", Clip.oneLine(text)) }
-                .onFailure { Hub.add("error", "Couldn't send the clipboard to ${d.name}", explain(it)) }
+                .onFailure { if (!quiet) Hub.add("error", "Couldn't send the clipboard to ${d.name}", explain(it)) }
             done(r.exceptionOrNull()?.let(explain))
         }
     }

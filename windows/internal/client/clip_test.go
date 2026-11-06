@@ -21,10 +21,11 @@ func TestClipboard(t *testing.T) {
 	ts.Add(trust.Device{ID: laptop.Fingerprint, Name: "Laptop"})
 	on := true
 	var got, from string
+	var auto bool
 	srv := &server.Server{Name: "Phone", Identity: phone, Trust: ts, Folders: files.NewFolders("d"),
-		OnClip: func(_, f, text string) bool {
+		OnClip: func(_, f, text string, a bool) bool {
 			if on {
-				got, from = text, f
+				got, from, auto = text, f, a
 			}
 			return on
 		},
@@ -45,8 +46,12 @@ func TestClipboard(t *testing.T) {
 		return c
 	}
 	c := dial()
-	if err := c.PushClip("hello 👋 from the laptop"); err != nil || got != "hello 👋 from the laptop" || from != "Laptop" {
-		t.Fatalf("push: %v %q %q", err, got, from)
+	if err := c.PushClip("hello 👋 from the laptop"); err != nil || got != "hello 👋 from the laptop" || from != "Laptop" || auto {
+		t.Fatalf("push: %v %q %q %v", err, got, from, auto)
+	}
+	c = dial()
+	if err := c.PushClipAuto("copied by itself"); err != nil || got != "copied by itself" || !auto {
+		t.Fatalf("auto push: %v %q %v", err, got, auto)
 	}
 	text, err := c.RequestClip()
 	c.Close()

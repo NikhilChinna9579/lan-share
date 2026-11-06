@@ -81,7 +81,7 @@ type Server struct {
 	// OnClip, if set, receives text a paired device put on our clipboard (clip_push);
 	// it returns false if clipboard sharing is off. ClipText answers "paste from"
 	// (clip_request): the text, or ok=false with a reason.
-	OnClip   func(peerID, from, text string) bool
+	OnClip   func(peerID, from, text string, auto bool) bool
 	ClipText func() (text string, ok bool, reason string)
 	// AllowBrowse, if set and returning false, refuses listing and fetching files
 	// (a paired device can still send here).
@@ -265,7 +265,7 @@ func (s *Server) handle(c *tls.Conn) {
 		case "clip_push":
 			var req protocol.ClipPush
 			json.Unmarshal(raw, &req)
-			if s.OnClip == nil || len(req.Text) > protocol.MaxClip || !s.OnClip(peerID, peer.Name, req.Text) {
+			if s.OnClip == nil || len(req.Text) > protocol.MaxClip || !s.OnClip(peerID, peer.Name, req.Text, req.Auto) {
 				err = protocol.WriteFrame(conn, protocol.Error{Type: "error", Code: "not_allowed", Message: "clipboard sharing is off on " + s.Name})
 				break
 			}

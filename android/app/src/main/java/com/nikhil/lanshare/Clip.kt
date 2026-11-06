@@ -35,10 +35,60 @@ object Clip {
     fun setEnabled(ctx: Context, on: Boolean) =
         ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("clip", on).apply()
 
+    /** "Ask with a Copy button" (default) instead of putting arriving text straight on the clipboard. */
+    fun askFirst(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("clip_ask", true)
+    fun setAskFirst(ctx: Context, on: Boolean) =
+        ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("clip_ask", on).apply()
+
+    /** Text copied on a laptop arrived: onto the clipboard, or offered with a Copy button. */
+    fun incoming(ctx: Context, text: String, from: String, auto: Boolean) {
+        if (!auto || !askFirst(ctx)) return write(ctx, text, from) // a deliberate send: straight in
+        val app = ctx.applicationContext
+        val dir = java.io.File(app.filesDir, "clip_in").apply { mkdirs() }
+        dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(4)?.forEach { it.delete() } // keep a few
+        val id = (System.currentTimeMillis() % 1_000_000).toInt()
+        java.io.File(dir, "$id.txt").writeText(text)
+        java.io.File(dir, "$id.from").writeText(from)
+        Log.i("LanShare", "clipboard from $from: ${text.length} chars, offered (Copy button)")
+        val nm = app.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CH_ASK, "Copied on your other devices", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            setSound(null, null); enableVibration(false)
+        })
+        val copy = android.app.PendingIntent.getBroadcast(app, id,
+            android.content.Intent(app, CopyReceiver::class.java).putExtra("id", id),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = Notification.Builder(app, CH_ASK)
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle("Copied on $from")
+            .setContentText(oneLine(text))
+            .setStyle(Notification.BigTextStyle().bigText(text.take(400)))
+            .setContentIntent(copy) // tapping it copies too
+            .addAction(Notification.Action.Builder(null, "Copy", copy).build())
+            .setAutoCancel(true)
+            .setTimeoutAfter(10 * 60_000)
+            .build()
+        runCatching { nm.notify(NOTE_ASK, n) }
+    }
+
+    /** The notification's Copy button. */
+    class CopyReceiver : android.content.BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: android.content.Intent) {
+            val id = intent.getIntExtra("id", -1)
+            val dir = java.io.File(ctx.filesDir, "clip_in")
+            val text = runCatching { java.io.File(dir, "$id.txt").readText() }.getOrNull() ?: return
+            val from = runCatching { java.io.File(dir, "$id.from").readText() }.getOrDefault("your laptop")
+            write(ctx, text, from, notify = false)
+            ctx.getSystemService(NotificationManager::class.java).cancel(NOTE_ASK)
+            Log.i("LanShare", "clipboard: copied what came from $from")
+            android.widget.Toast.makeText(ctx, "Copied. Paste anywhere.", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     /** Puts text from [from] on this phone's clipboard; a quiet notification says so. */
     fun write(ctx: Context, text: String, from: String, notify: Boolean = true) {
         val app = ctx.applicationContext
         remember(app, text) // came from there: never sent back
+        selfWriteAt = System.currentTimeMillis() // the watcher ignores our own change
         val done = CountDownLatch(1)
         main.post {
             runCatching {
@@ -47,7 +97,7 @@ object Clip {
             done.countDown()
         }
         done.await(2, TimeUnit.SECONDS)
-        Log.i("LanShare", "clipboard from $from: ${text.length} chars")
+        Log.i("LanShare", "clipboard from $from: ${text.length} chars (on the clipboard)")
         if (notify) {
             val nm = app.getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(NotificationChannel(CH, "Copied from your laptops", NotificationManager.IMPORTANCE_LOW))
@@ -132,8 +182,8 @@ object Clip {
      * Only text copied in the last 10 minutes, not marked private, and not what just
      * came from a laptop.
      */
-    fun autoSend(activity: Activity, targets: () -> List<Device>, send: (Device, String) -> Unit) {
-        if (!enabled(activity) || !autoEnabled(activity) || System.currentTimeMillis() < holdUntil) return
+    fun autoSend(activity: Activity, targets: () -> List<Device>, force: Boolean = false, send: (Device, String) -> Unit) {
+        if (!enabled(activity) || (!force && !autoEnabled(activity)) || System.currentTimeMillis() < holdUntil) return
         val cm = activity.getSystemService(ClipboardManager::class.java)
         val clip = runCatching { cm.primaryClip }.getOrNull() ?: return
         val age = System.currentTimeMillis() - (clip.description?.timestamp ?: 0L)
@@ -149,6 +199,9 @@ object Clip {
     fun oneLine(text: String): String = text.replace(Regex("\\s+"), " ").trim().let { if (it.length > 80) it.take(80) + "…" else it }
 
     const val MAX = 256 * 1024
+    private const val CH_ASK = "clipboard_ask"
+    private const val NOTE_ASK = 12
+    @Volatile var selfWriteAt = 0L
     // ClipDescription.EXTRA_IS_SENSITIVE (Android 13); the same text works with older SDKs.
     private const val EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
 }

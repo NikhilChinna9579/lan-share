@@ -302,7 +302,7 @@ function render() {
   let clip = "";
   if (recent(S.clipIn)) {
     clip = `<div class="card tr clip"><div class="row"><div class="badge">${icon("clip")}</div>
-      <div class="grow"><div class="t1">Copied from ${esc(S.clipIn.device)} <span class="small">· ${ago(S.clipIn.at)} · paste with Ctrl+V</span></div>
+      <div class="grow"><div class="t1">${S.clipIn.offered ? "Copied on" : "Copied from"} ${esc(S.clipIn.device)} <span class="small">· ${ago(S.clipIn.at)} · ${S.clipIn.offered ? "click Copy to paste it here" : "paste with Ctrl+V"}</span></div>
       <div class="cliptext">${esc(S.clipIn.text)}</div></div>
       <button class="btn ghost small" data-act="clipcopy" title="Put it on the clipboard again">Copy</button></div></div>`;
   }
@@ -474,6 +474,7 @@ function renderSettings(el) {
       <button class="r" data-act="rename"><span class="ic">${icon("desktop")}</span><span class="grow"><div>Name: <b>${esc(S.me.name)}</b></div><div class="t2">What your phones call this laptop · tap to change</div></span></button>
       <button class="r" data-act="toggleask"><span class="grow"><div>Ask before receiving files</div><div class="t2">${S.me.ask ? "You accept or decline each time" : "Paired phones' files are saved straight away"}</div></span><span class="switch ${S.me.ask ? "on" : ""}"></span></button>
       <button class="r" data-act="toggleclip"><span class="grow"><div>Share the clipboard with phones</div><div class="t2">${S.me.clip ? "Copy here, paste on your phone (and phones can send you text)" : "Off: nothing copied is shared"}</div></span><span class="switch ${S.me.clip ? "on" : ""}"></span></button>
+      ${S.me.clip ? `<button class="r" data-act="toggleclipnow"><span class="grow"><div>Ask before replacing my clipboard</div><div class="t2">${S.me.clipNow ? "Off: what's copied on a phone is ready for Ctrl+V right away" : "Copied on a phone: a notification; click it (or Copy here) to paste"}</div></span><span class="switch ${S.me.clipNow ? "" : "on"}"></span></button>` : ""}
       <button class="r" data-act="togglebrowse"><span class="grow"><div>Let phones browse and get files</div><div class="t2">${S.me.browse ? "Paired phones can see and get files in the shared folders" : "Phones can only send here"}</div></span><span class="switch ${S.me.browse ? "on" : ""}"></span></button>
       <button class="r" data-act="autostart"><span class="grow"><div>Start LAN Share when I sign in</div><div class="t2">So your phone can always send to this laptop</div></span><span class="switch ${S.me.autostart ? "on" : ""}"></span></button>
       <button class="r" data-act="firewall"><span class="ic">${icon("shield")}</span><span class="grow"><div>Allow through Windows Firewall</div><div class="t2">Fixes "phone can't connect to laptop". Windows asks once.</div></span></button>
@@ -641,6 +642,7 @@ document.addEventListener("click", async (ev) => {
         return toast(`Copied ${r.chars} characters from ${d ? d.name : "the phone"}. Paste with Ctrl+V.`);
       }
       case "toggleask": return api("/api/settings", {ask: !S.me.ask});
+      case "toggleclipnow": return api("/api/settings", {clipNow: !S.me.clipNow});
       case "togglebrowse": return api("/api/settings", {browse: !S.me.browse});
       case "setdefault": return api("/api/folders/default", {key: t.dataset.key});
       case "addfolder": { const r = await api("/api/pick/sendfolder", {}); m.files.push(...r); return renderModal(); }

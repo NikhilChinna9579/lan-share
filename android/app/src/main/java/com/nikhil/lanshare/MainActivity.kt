@@ -131,13 +131,14 @@ class MainActivity : Activity() {
         Hub.listen(onHub)
         presence.start()
         Clip.screenShown()
+        ClipWatcher.start(this) // while on screen: Android 13+ asks to allow log access then
         render()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) Clip.autoSend(this, { DeviceStore.all(this).filter { presence.status(it.id).state == Presence.State.ONLINE } }) { d, t ->
-            Actions.sendClip(this, d, t, { friendly(it, d) })
+            Actions.sendClip(this, d, t, { friendly(it, d) }, auto = true)
         }
     }
 
@@ -644,6 +645,16 @@ class MainActivity : Activity() {
             Clip.setEnabled(this, !clip); fillSharedFolders(sheet)
         })
         if (clip) {
+            val ask = Clip.askFirst(this)
+            sheet.add(Sheet.Row(R.drawable.ic_document, "Ask before replacing my clipboard",
+                sub = if (ask) "Copied on a laptop: a notification with a Copy button" else "Off: what's copied on a laptop is ready to paste right away",
+                trail = if (ask) Sheet.Trail.SWITCH_ON else Sheet.Trail.SWITCH_OFF, dismiss = false) {
+                Clip.setAskFirst(this, !ask); fillSharedFolders(sheet)
+            })
+            val why = ClipWatcher.problem(this)
+            sheet.add(Sheet.Row(R.drawable.ic_shield, "Copies here go to laptops with no tap",
+                sub = why ?: "On: copy in any app, paste on the laptop",
+                chip = if (why == null) "On" else "Advanced", dismiss = false) { explainWatcher() })
             val auto = Clip.autoEnabled(this)
             sheet.add(Sheet.Row(R.drawable.ic_document, "Send what I copy here automatically",
                 sub = if (auto) "When LAN Share or the bubble opens (Android allows it only then)" else "Off: send it from the bubble or the Send sheet",
@@ -816,6 +827,26 @@ class MainActivity : Activity() {
         data.clipData?.let { clip -> for (i in 0 until clip.itemCount) uris += clip.getItemAt(i).uri }
         if (uris.isEmpty()) data.data?.let { uris += it }
         if (uris.isNotEmpty()) chooseFolder(target, uris)
+    }
+
+    /** How to turn on the no-tap phone → laptop clipboard (a one-time grant from a computer). */
+    private fun explainWatcher() {
+        val sheet = Sheet(this, "Copies here → laptops, no tap",
+            "Android only lets the app on screen read what's copied. With a one-time permission, given from a computer, " +
+            "LAN Share notices each copy and sends it (Android shows a small “pasted from your clipboard” note each time).")
+        val steps = listOf(
+            "1. On the phone: Settings → About phone → tap Build number 7 times; then Developer options → USB debugging on.",
+            "2. Connect the phone to the laptop with a cable (or use Wireless debugging) and allow it.",
+            "3. On the laptop, run:\n${ClipWatcher.GRANT_COMMAND}",
+            "4. Open LAN Share; if Android asks to allow access to device logs, choose Allow.",
+        )
+        steps.forEach { sheet.message(it) }
+        ClipWatcher.problem(this)?.let { sheet.note("Now: $it") } ?: sheet.note("It's on.")
+        sheet.primary("Copy the command") {
+            getSystemService(android.content.ClipboardManager::class.java)
+                .setPrimaryClip(android.content.ClipData.newPlainText("command", ClipWatcher.GRANT_COMMAND))
+        }
+        sheet.show()
     }
 
     /** Files shared from another app ("this file" in the requirements). */
@@ -1122,6 +1153,15 @@ class MainActivity : Activity() {
             f.delete()
             Log.i(TAG, "test hook: $mode")
             val d = DeviceStore.all(this).firstOrNull() ?: Device("demo", "DESKTOP-NIKHIL", "", 0, 0)
+            if (mode == "ask_clip_off" || mode == "ask_clip_on") { Clip.setAskFirst(this, mode.endsWith("on")); return@let }
+            if (mode.startsWith("bg_copy:")) { // copied "in another app" a few seconds after LAN Share leaves
+                Clip.holdUntil = System.currentTimeMillis() + 2500
+                val text = mode.removePrefix("bg_copy:")
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                main.postDelayed({ cm.setPrimaryClip(android.content.ClipData.newPlainText("test", text)) }, 3500)
+                moveTaskToBack(true)
+                return@let
+            }
             if (mode.startsWith("copy_only:")) { // as if copied in another app, then LAN Share left
                 Clip.holdUntil = System.currentTimeMillis() + 3000
                 getSystemService(android.content.ClipboardManager::class.java)
