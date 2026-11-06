@@ -124,8 +124,21 @@ bail_if_crashed() { if crashed; then fail "app crashed during: $1"; A logcat -d 
 A logcat -b crash -c
 mark; night no; app
 expect 30 'screen: unpaired' "first launch shows pairing"
-expect 10 'setup: shown' "first start asks for everything it can use, in one place"
-shot 00-setup
+# First start asks the usual Android way: its own dialogs one after another.
+expect 10 'setup: asking for [1-9][0-9]* permission' "first start asks with Android's own permission dialogs"
+sleep 2; shot 00-setup-permission
+until_ok 10 "tap_text 'While using the app'"
+expect 15 'setup: background' "…then “always run in the background?”"
+sleep 2; shot 00-setup-background
+until_ok 10 "tap_text Allow"
+expect 15 'setup: tile' "…then “add the Send copied text tile?”"
+sleep 2; shot 00-setup-tile
+until_ok 10 "tap_text 'Add tile'"
+expect 15 'setup: add tile' "…the tile answer comes back"
+expect 15 'setup: bubble question' "…then one question about the bubble"
+shot 00-setup-bubble
+until_ok 10 "tap_text 'Not now'"
+expect 10 'setup: done' "…and setup is done"
 expect 5 'version: [0-9.]+ · built [0-9]+ [A-Z][a-z]+ 20[0-9]{2}' "home screen shows which build this is (build time)"
 shot 01-unpaired-light
 bail_if_crashed "first launch"
