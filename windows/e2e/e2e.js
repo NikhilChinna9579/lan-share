@@ -88,7 +88,7 @@ async function step(name, fn) {
   let bubbleSaw = "";
   const bubbleVisible = () => (bubbleSaw = execFileSync("powershell", ["-NoProfile", "-Command",
     `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);'; ` +
-    `$h = [U.W]::FindWindow('LanShareBubble', $null); if ($h -ne [System.IntPtr]::Zero -and [U.W]::IsWindowVisible($h)) { 'yes' } else { 'no ' + $h }`], { timeout: 30_000 }).toString().trim()) === "yes";
+    `$h = [U.W]::FindWindow('LanShareBubble', [NullString]::Value); if ($h -ne [System.IntPtr]::Zero -and [U.W]::IsWindowVisible($h)) { 'yes' } else { 'no ' + $h }`], { timeout: 30_000 }).toString().trim()) === "yes";
   const phoneData = path.join(work, "phone");
   const pairFile = path.join(work, "pair.json");
   const phoneInbox = path.join(phoneData, "inbox", "Download");
