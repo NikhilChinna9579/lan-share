@@ -84,9 +84,10 @@ async function step(name, fn) {
     } catch (e) { console.log("note: couldn't make the test recording: " + e.message); }
   }
   // Windows: is the bubble window on screen?
-  const bubbleVisible = () => execFileSync("powershell", ["-NoProfile", "-Command",
+  let bubbleSaw = "";
+  const bubbleVisible = () => (bubbleSaw = execFileSync("powershell", ["-NoProfile", "-Command",
     `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);'; ` +
-    `$h = [U.W]::FindWindow('LanShareBubble', $null); if ($h -ne [System.IntPtr]::Zero -and [U.W]::IsWindowVisible($h)) { 'yes' } else { 'no' }`], { timeout: 30_000 }).toString().trim() === "yes";
+    `$h = [U.W]::FindWindow('LanShareBubble', $null); if ($h -ne [System.IntPtr]::Zero -and [U.W]::IsWindowVisible($h)) { 'yes' } else { 'no ' + $h }`], { timeout: 30_000 }).toString().trim()) === "yes";
   const phoneData = path.join(work, "phone");
   const pairFile = path.join(work, "pair.json");
   const phoneInbox = path.join(phoneData, "inbox", "Download");
@@ -587,7 +588,7 @@ async function step(name, fn) {
     });
 
     if (win) await step("Windows: the floating bubble is on screen, and hides from Settings", async () => {
-      await waitFor("the bubble", () => bubbleVisible(), 15_000);
+      await waitFor("the bubble", () => bubbleVisible(), 15_000).catch((e) => { throw new Error(e.message + " (saw: " + bubbleSaw + ")"); });
       try {
         execFileSync("powershell", ["-NoProfile", "-Command",
           `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; ` +

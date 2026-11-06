@@ -133,6 +133,8 @@ func (t *tray) bubbleUpdate() {
 	}
 	pShowWindow.Call(bubble.hwnd, swShowNoActivate)
 	bubble.draw(bubble.showing)
+	vis, _, _ := user32.NewProc("IsWindowVisible").Call(bubble.hwnd)
+	logf("bubble: on screen=%v (window %#x)", vis != 0, bubble.hwnd)
 }
 
 func (b *bubbleWin) create() bool {
