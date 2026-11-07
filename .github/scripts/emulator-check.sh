@@ -184,6 +184,8 @@ until_ok 30 "[ \"\$(stat -c %s '$HOME/Downloads/Quarterly report.pdf' 2>/dev/nul
 expect 10 'served 1 files to DESKTOP-NIKHIL' "phone logs what it served"
 
 # ---------------------------------------------------------------- 4a. shared clipboard
+until_ok 15 "state | grep -qE '\"battery\":[1-9]'" && pass "the laptop shows the phone's battery ($(state | grep -oE '"battery":[0-9]+(,"charging":true)?' | head -1))" \
+  || fail "the phone's battery on the laptop"
 mark; api /api/clip/copy '{"text":"Meeting at 5pm ✓"}' >/dev/null
 expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars, offered' "copied on the laptop: a notification with a Copy button (the default)"
 shade_open() { A shell cmd statusbar expand-notifications; sleep 2; }
@@ -192,6 +194,13 @@ until_ok 10 "KEEP_SHADE=1 tap_text Copy"; sleep 1; shade_closed
 expect 10 'clipboard: copied what came from DESKTOP-NIKHIL' "…Copy puts it on the phone's clipboard"
 MS=$(applog | tail -n +$((MARK + 1)) | grep -oE 'Copy took [0-9]+ ms' | tail -1 | grep -oE '[0-9]+' || true)
 [ -n "$MS" ] && [ "$MS" -lt 500 ] && pass "…at once (${MS} ms), no repeated tapping" || fail "Copy button was slow (${MS:-?} ms)"
+# A link copied on the laptop: the notification also has Open, which opens it.
+mark; api /api/clip/copy '{"text":"Watch this https://example.com/lan-share-link"}' >/dev/null
+expect 15 'clipboard from DESKTOP-NIKHIL: [0-9]+ chars, offered' "a link copied on the laptop: offered on the phone"
+shade_open; shot 06b3-link-notification
+until_ok 10 "KEEP_SHADE=1 tap_text Open"
+expect 10 'link: opening https://example.com/lan-share-link' "…and its Open button opens the link"
+sleep 3; A shell input keyevent KEYCODE_HOME; A shell am force-stop com.android.chrome >/dev/null 2>&1; shade_closed
 run_hook ask_clip_off
 mark; api /api/clip/copy '{"text":"Straight in 9921"}' >/dev/null
 expect 15 'clipboard from DESKTOP-NIKHIL: 16 chars \(on the clipboard\)' "with asking off: straight onto the phone's clipboard"
@@ -209,6 +218,7 @@ A shell input keyevent KEYCODE_HOME; sleep 4
 api /api/remote/clip "{\"device\":\"$DEV\"}" | grep -q "isn't open" && pass "…and says why not when it isn't open" || fail "paste from a phone in the background"
 A shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "https://example.com/shared" -n $PKG/.MainActivity >/dev/null
 until_ok 20 "api /api/clip | grep -q 'example.com/shared'" && pass "Share → LAN Share with text puts it on the laptop's clipboard" || fail "shared text to the laptop"
+state | grep -q '"link":"https://example.com/shared"' && pass "…and the laptop offers Open for the link" || fail "laptop Open for a shared link"
 # Copied on the phone, then LAN Share opened: it goes across by itself.
 run_hook "copy_only:Copied on the phone 4417"; sleep 2
 mark; app 3

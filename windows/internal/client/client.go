@@ -128,17 +128,27 @@ func (c *Conn) Ping() error {
 	return err
 }
 
-// PingInfo pings and also returns whether the device says it can connect back to us
-// (nil if it didn't say). false usually means a firewall on this computer blocks it.
-func (c *Conn) PingInfo() (*bool, error) {
+// Pong is what a device says when pinged.
+type Pong struct {
+	// Reach: whether it can connect back to us (nil if it didn't say). false usually
+	// means a firewall on this computer blocks it.
+	Reach *bool `json:"reach"`
+	// Battery: its battery level, 1-100 (0 if it didn't say), and whether it's charging.
+	Battery  int  `json:"battery"`
+	Charging bool `json:"charging"`
+}
+
+// PingInfo pings and returns what the device said about itself.
+func (c *Conn) PingInfo() (Pong, error) {
+	var pong Pong
 	if err := c.send(protocol.Message{Type: "ping"}); err != nil {
-		return nil, err
-	}
-	var pong struct {
-		Reach *bool `json:"reach"`
+		return pong, err
 	}
 	err := c.expect(&pong, "pong")
-	return pong.Reach, err
+	if pong.Battery < 0 || pong.Battery > 100 {
+		pong.Battery = 0
+	}
+	return pong, err
 }
 
 // Pair sends the one-time code from the QR (only the fake phone uses this; the real

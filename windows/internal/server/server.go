@@ -73,6 +73,10 @@ type Server struct {
 	// ReportReach, if set, is sent in every pong: whether we can connect back to
 	// the pinging device. The phone simulator uses it to imitate a blocked firewall.
 	ReportReach *bool
+	// ReportBattery (1-100), if set, is sent in every pong with ReportCharging, like a
+	// phone does (the phone simulator uses it).
+	ReportBattery  int
+	ReportCharging bool
 	// Throttle (testing) limits how fast files are received, in bytes per second.
 	Throttle int64
 	// PartialDir, if set, keeps big unfinished files (in the app's own folder) so the
@@ -235,11 +239,14 @@ func (s *Server) handle(c *tls.Conn) {
 				trusted, peer = true, trust.Device{ID: peerID, Name: req.Name}
 			}
 		case "ping":
+			pong := map[string]any{"type": "pong"}
 			if s.ReportReach != nil {
-				err = protocol.WriteFrame(conn, map[string]any{"type": "pong", "reach": *s.ReportReach})
-			} else {
-				err = protocol.WriteFrame(conn, protocol.Message{Type: "pong"})
+				pong["reach"] = *s.ReportReach
 			}
+			if s.ReportBattery > 0 {
+				pong["battery"], pong["charging"] = s.ReportBattery, s.ReportCharging
+			}
+			err = protocol.WriteFrame(conn, pong)
 		case "folders_request":
 			err = s.sendFolders(conn)
 		case "list_request":

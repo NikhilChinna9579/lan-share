@@ -86,3 +86,42 @@ func TestImpostorIsNotOnline(t *testing.T) {
 		t.Fatal("impostor counted as online")
 	}
 }
+
+func TestBatteryFromPing(t *testing.T) {
+	tr := newTracker(t)
+	dir := t.TempDir()
+	phoneID, _ := identity.LoadOrCreate(dir, "Phone")
+	ts, _ := trust.Open(dir)
+	ts.Add(trust.Device{ID: tr.Me.Fingerprint, Name: "Laptop"})
+	srv := &server.Server{Name: "Phone", Identity: phoneID, Trust: ts, Folders: files.NewFolders("downloads"), ReportBattery: 64}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go srv.Serve(ln)
+	tr.Trust.Add(trust.Device{ID: phoneID.Fingerprint, Name: "Phone", Addr: ln.Addr().String()})
+	changes := make(chan State, 8)
+	tr.OnChange = func(s State) { changes <- s }
+
+	tr.checkAll() // comes online already knowing its battery
+	if s := <-changes; s.Status != Online || s.Battery != 64 || s.Charging {
+		t.Fatalf("got %+v, want online at 64%%", s)
+	}
+	srv.ReportBattery, srv.ReportCharging = 65, true // plugged in: told, though still online
+	tr.checkAll()
+	select {
+	case s := <-changes:
+		if s.Battery != 65 || !s.Charging {
+			t.Fatalf("got %+v, want 65%% charging", s)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("battery change not told")
+	}
+	tr.checkAll() // unchanged: nothing told
+	select {
+	case s := <-changes:
+		t.Fatalf("told again with no change: %+v", s)
+	case <-time.After(300 * time.Millisecond):
+	}
+}

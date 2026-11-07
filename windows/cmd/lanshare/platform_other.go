@@ -32,4 +32,6 @@ func setAutostart(bool) error      { return errUnsupported }
 
 func openPath(p string, _ bool) error { return exec.Command("xdg-open", p).Start() }
 
+func openURL(u string) error { return exec.Command("xdg-open", u).Start() }
+
 func showError(msg string) { fmt.Fprintln(os.Stderr, "LAN Share:", msg) }

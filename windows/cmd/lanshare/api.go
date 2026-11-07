@@ -360,6 +360,9 @@ func serveAPI(a *app, ln net.Listener) {
 	h("/api/clip/again", func(*http.Request) (any, error) { // the clipboard card's Copy button
 		return nil, a.copyOffered()
 	})
+	h("/api/clip/open", func(*http.Request) (any, error) { // the clipboard card's Open button (a link)
+		return nil, a.openClipLink()
+	})
 	h("/api/clip/copy", func(r *http.Request) (any, error) { // testing: as if the person copied this
 		var in struct{ Text string }
 		if err := readJSON(r, &in); err != nil {

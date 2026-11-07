@@ -58,13 +58,14 @@ object Clip {
         val copy = android.app.PendingIntent.getBroadcast(app, id,
             android.content.Intent(app, CopyReceiver::class.java).putExtra("id", id),
             android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
-        val n = Notification.Builder(app, CH_ASK)
+        val b = Notification.Builder(app, CH_ASK)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("Copied on $from")
             .setContentText(oneLine(text))
             .setStyle(Notification.BigTextStyle().bigText(text.take(400)))
             .setContentIntent(copy) // tapping it copies too
-            .addAction(Notification.Action.Builder(null, "Copy", copy).build())
+        linkIn(text)?.let { b.addAction(openAction(app, it, NOTE_ASK, id)) } // a link: Open, before Copy
+        val n = b.addAction(Notification.Action.Builder(null, "Copy", copy).build())
             .setAutoCancel(true)
             .setGroup("clipboard") // its own: never folded in with "Ready to receive", hiding Copy
             .setCategory(Notification.CATEGORY_STATUS)
@@ -110,14 +111,15 @@ object Clip {
         if (notify) {
             val nm = app.getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(NotificationChannel(CH, "Copied from your laptops", NotificationManager.IMPORTANCE_LOW))
-            val n = Notification.Builder(app, CH)
+            val link = linkIn(text)
+            val b = Notification.Builder(app, CH)
                 .setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle("Copied from $from")
+                .setContentTitle(if (link != null) "Link from $from · copied" else "Copied from $from")
                 .setContentText(oneLine(text))
-                .setTimeoutAfter(60_000)
+                .setTimeoutAfter(if (link != null) 10 * 60_000L else 60_000L)
                 .setAutoCancel(true)
-                .build()
-            runCatching { nm.notify(11, n) }
+            if (link != null) b.addAction(openAction(app, link, NOTE_COPIED, 0)).setContentIntent(openIntent(app, link, NOTE_COPIED, 0))
+            runCatching { nm.notify(NOTE_COPIED, b.build()) }
         }
     }
 
@@ -205,10 +207,43 @@ object Clip {
         to.forEach { send(it, text) }
     }
 
+    /**
+     * The web link in copied text: the first http(s) address ("https://youtu.be/…", or
+     * "Look at this: https://amzn.in/d/…"), or null. Same rules as the laptop's linkIn.
+     */
+    fun linkIn(text: String): String? {
+        if (text.length > 4096) return null
+        for (raw in text.split(Regex("\\s+"))) {
+            var f = raw.trimStart('(', '<', '[', '"', '\'').trimEnd('.', ',', ';', ':', '!', '?', '>', ']', '"', '\'')
+            // A ")" ends the link only when it doesn't close a "(" inside it (Wikipedia links).
+            while (f.endsWith(")") && f.count { it == '(' } < f.count { it == ')' }) f = f.dropLast(1)
+            if (safeLink(f)) return f
+        }
+        return null
+    }
+
+    /** Only http and https with a host: a laptop can never make this phone open an app's screen. */
+    fun safeLink(s: String): Boolean {
+        val low = s.lowercase()
+        if (!low.startsWith("http://") && !low.startsWith("https://")) return false
+        if (s.any { it <= ' ' || it == '\u007f' || it == '"' }) return false
+        val u = android.net.Uri.parse(s)
+        return u.scheme?.lowercase() in setOf("http", "https") && !u.host.isNullOrEmpty()
+    }
+
+    private fun openIntent(app: Context, link: String, note: Int, req: Int) = android.app.PendingIntent.getActivity(app, 7000 + req,
+        android.content.Intent(app, OpenLinkActivity::class.java).putExtra("link", link).putExtra("note", note)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+
+    private fun openAction(app: Context, link: String, note: Int, req: Int) =
+        Notification.Action.Builder(null, "Open", openIntent(app, link, note, req)).build()
+
     fun oneLine(text: String): String = text.replace(Regex("\\s+"), " ").trim().let { if (it.length > 80) it.take(80) + "…" else it }
 
     const val MAX = 256 * 1024
     private const val CH_ASK = "clipboard_ask"
+    const val NOTE_COPIED = 11
     private const val NOTE_ASK = 12
     @Volatile var selfWriteAt = 0L
     // ClipDescription.EXTRA_IS_SENSITIVE (Android 13); the same text works with older SDKs.

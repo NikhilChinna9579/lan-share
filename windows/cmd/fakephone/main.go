@@ -34,6 +34,8 @@ func main() {
 	sendFile := flag.String("send", "", "after starting, send this file to the paired laptop (Downloads)")
 	slowMB := flag.Int64("slow", 0, "receive at most this many MB per second (to test cancelling)")
 	cantReach := flag.Bool("cant-reach", false, "pretend this phone can't connect to the laptop (firewall test)")
+	battery := flag.Int("battery", 0, "report this battery level (1-100) when pinged")
+	charging := flag.Bool("charging", false, "with -battery: report that it's charging")
 	clipPush := flag.String("clip-push", "", "after starting, put this text on the paired laptop's clipboard")
 	clipAuto := flag.Bool("clip-auto", false, "send -clip-push as copied here by itself (the laptop may ask first)")
 	clipText := flag.String("clip-text", "", "this fake phone's clipboard, for 'paste from phone'")
@@ -140,6 +142,7 @@ func main() {
 		b, _ := json.Marshal(map[string]string{"code": code, "id": id.Fingerprint})
 		check(os.WriteFile(*allowPair, b, 0o600))
 	}
+	srv.ReportBattery, srv.ReportCharging = *battery, *charging
 	if *cantReach {
 		no := false
 		srv.ReportReach = &no

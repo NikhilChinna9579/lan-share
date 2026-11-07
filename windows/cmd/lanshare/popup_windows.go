@@ -1,8 +1,9 @@
 package main
 
 // "Copied on Pixel": a small box at the bottom-right of the screen (not inside LAN
-// Share's window) with a preview and Copy / Dismiss. It never takes the focus from the
-// app you're in, and closes itself after 30 seconds. Plain Win32, like the tray.
+// Share's window) with a preview and Copy / Dismiss, plus Open when it's a web link.
+// It never takes the focus from the app you're in, and closes itself after 30 seconds.
+// Plain Win32, like the tray.
 
 import (
 	"sync"
@@ -21,6 +22,7 @@ const (
 	maNoActivate     = 3
 	swpNoSize        = 0x0001
 	swpNoActivate    = 0x0010
+	swpNoZOrder      = 0x0004
 	swShowNoActivate = 4
 	swHide           = 0
 )
@@ -40,6 +42,7 @@ const (
 	ssNoPrefix    = 0x0080
 	popupCopy     = 1
 	popupDismiss  = 2
+	popupOpen     = 3
 	popupTimer    = 1
 )
 
@@ -63,25 +66,31 @@ var (
 type clipPopupWin struct {
 	a                   *app
 	hwnd, title, body   uintptr
+	open, copy, dismiss uintptr
 	w, h                int32
+	dpi                 int32
 	fontBold, fontPlain uintptr
 }
 
 var (
 	clipPopup     *clipPopupWin
 	clipPopupMu   sync.Mutex
-	clipPopupNext [2]string // title, preview: read on the tray thread
+	clipPopupNext popupMsg // read on the tray thread
 )
 
 // showClipPopup asks the tray thread to show the box (from any goroutine).
-func showClipPopup(a *app, title, preview string) {
+func showClipPopup(a *app, m popupMsg) {
 	t := theTray
 	if t == nil || t.hwnd == 0 {
-		notifyClick(title, preview+" · click to copy", func() { a.copyOffered() })
+		if m.Copy {
+			notifyClick(m.Title, m.Body+" · click to copy", func() { a.copyOffered() })
+		} else {
+			notifyClick(m.Title, m.Body+" · click to open", func() { a.openClipLink() })
+		}
 		return
 	}
 	clipPopupMu.Lock()
-	clipPopupNext = [2]string{title, preview}
+	clipPopupNext = m
 	clipPopupMu.Unlock()
 	pPostMessage.Call(t.hwnd, wmClipPopup, 0, 0)
 }
@@ -99,15 +108,29 @@ func (t *tray) clipPopupShow() {
 	next := clipPopupNext
 	clipPopupMu.Unlock()
 	p := clipPopup
-	setText(p.title, next[0])
-	setText(p.body, next[1])
+	setText(p.title, next.Title)
+	setText(p.body, next.Body)
+	// Buttons from the right: Dismiss, then Copy, then Open (only those that apply).
+	x := int32(244)
+	place := func(h uintptr, show bool) {
+		if !show {
+			pShowWindow.Call(h, swHide)
+			return
+		}
+		pSetWindowPos.Call(h, 0, uintptr(p.px(x)), uintptr(p.px(74)), 0, 0, swpNoSize|swpNoActivate|swpNoZOrder)
+		pShowWindow.Call(h, swShowNoActivate)
+		x -= 88
+	}
+	place(p.dismiss, true)
+	place(p.copy, next.Copy)
+	place(p.open, next.Link)
 	var work [4]int32
 	pSystemParametersInfo.Call(0x0030, 0, uintptr(unsafe.Pointer(&work)), 0) // SPI_GETWORKAREA
 	x, y := work[2]-p.w-16, work[3]-p.h-16
 	pSetWindowPos.Call(p.hwnd, ^uintptr(0) /* HWND_TOPMOST */, uintptr(x), uintptr(y), 0, 0, swpNoSize|swpNoActivate)
 	pShowWindow.Call(p.hwnd, swShowNoActivate)
 	pSetTimer.Call(p.hwnd, popupTimer, 30_000, 0)
-	logf("clip popup: shown")
+	logf("clip popup: shown (copy %v, open %v)", next.Copy, next.Link)
 }
 
 func setText(h uintptr, s string) {
@@ -115,14 +138,16 @@ func setText(h uintptr, s string) {
 	pSetWindowText.Call(h, uintptr(unsafe.Pointer(p)))
 }
 
+func (p *clipPopupWin) px(v int32) int32 { return v * p.dpi / 96 }
+
 func (p *clipPopupWin) create() bool {
-	dpi := uint32(96)
+	p.dpi = 96
 	if pGetDpiForSystem.Find() == nil {
 		if d, _, _ := pGetDpiForSystem.Call(); d > 0 {
-			dpi = uint32(d)
+			p.dpi = int32(d)
 		}
 	}
-	px := func(v int32) int32 { return v * int32(dpi) / 96 }
+	px := p.px
 	p.w, p.h = px(340), px(112)
 	inst, _, _ := pGetModuleHandle.Call(0)
 	cls, _ := syscall.UTF16PtrFromString("LanShareClipPopup")
@@ -153,8 +178,9 @@ func (p *clipPopupWin) create() bool {
 	}
 	p.title = child("STATIC", "", ssEndEllipsis|ssNoPrefix, 14, 10, 312, 22, 0, p.fontBold)
 	p.body = child("STATIC", "", ssEndEllipsis|ssNoPrefix, 14, 34, 312, 36, 0, p.fontPlain)
-	child("BUTTON", "Copy", bsDefPush, 156, 74, 82, 28, popupCopy, p.fontPlain)
-	child("BUTTON", "Dismiss", bsPushButton, 244, 74, 82, 28, popupDismiss, p.fontPlain)
+	p.open = child("BUTTON", "Open", bsPushButton, 68, 74, 82, 28, popupOpen, p.fontPlain)
+	p.copy = child("BUTTON", "Copy", bsDefPush, 156, 74, 82, 28, popupCopy, p.fontPlain)
+	p.dismiss = child("BUTTON", "Dismiss", bsPushButton, 244, 74, 82, 28, popupDismiss, p.fontPlain)
 	return true
 }
 
@@ -179,6 +205,14 @@ func (p *clipPopupWin) wndProc(hwnd uintptr, message uint32, wParam, lParam uint
 			go func() {
 				if err := p.a.copyOffered(); err != nil {
 					notify("Couldn't copy", err.Error())
+				}
+			}()
+		case popupOpen:
+			p.hide()
+			logf("clip popup: Open")
+			go func() {
+				if err := p.a.openClipLink(); err != nil {
+					notify("Couldn't open the link", err.Error())
 				}
 			}()
 		case popupDismiss:
