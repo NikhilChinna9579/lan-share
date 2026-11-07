@@ -50,6 +50,9 @@ type State struct {
 	// CantReachUs is true when the device answers us but reports it can't connect
 	// back to this computer: almost always Windows Firewall blocking LAN Share.
 	CantReachUs bool
+	// Battery is the device's battery level (1-100; 0 = it didn't say), from its last ping.
+	Battery  int
+	Charging bool
 }
 
 // Tracker pings paired devices in the background.
@@ -207,12 +210,13 @@ func (t *Tracker) tryDevice(id string) (string, bool) {
 		if err != nil {
 			continue
 		}
-		reach, err := c.PingInfo()
+		pong, err := c.PingInfo()
 		c.Close()
 		if err == nil {
 			t.Trust.SetName(id, c.PeerName) // it may have been renamed
+			t.setBattery(id, pong.Battery, pong.Charging)
 			t.update(id, Online, addr)
-			t.setReach(id, reach != nil && !*reach)
+			t.setReach(id, pong.Reach != nil && !*pong.Reach)
 			t.Trust.SetAddr(id, addr)
 			return addr, true
 		}
@@ -251,6 +255,24 @@ func (t *Tracker) update(id string, st Status, addr string) {
 	snap := *s
 	t.mu.Unlock()
 	if snap.Status != prev && t.OnChange != nil {
+		t.OnChange(snap)
+	}
+}
+
+// setBattery records what the device said about its battery (told only when it changes).
+func (t *Tracker) setBattery(id string, level int, charging bool) {
+	t.mu.Lock()
+	t.init()
+	s, ok := t.states[id]
+	if !ok {
+		s = &State{ID: id, Status: Checking}
+		t.states[id] = s
+	}
+	changed := s.Battery != level || s.Charging != charging
+	s.Battery, s.Charging = level, charging
+	snap := *s
+	t.mu.Unlock()
+	if changed && ok && snap.Status == Online && t.OnChange != nil {
 		t.OnChange(snap)
 	}
 }

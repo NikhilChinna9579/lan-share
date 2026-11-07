@@ -65,6 +65,15 @@
             android:taskAffinity=".clipsend"
             android:theme="@style/Theme.LanShare.Popup" />
 
+        <!-- The clipboard notification's Open button (a web link). -->
+        <activity
+            android:name=".OpenLinkActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=".openlink"
+            android:theme="@android:style/Theme.NoDisplay" />
+
         <!-- Quick Settings tile: "Send copied text" to the laptop in one tap. -->
         <service
             android:name=".ClipTile"

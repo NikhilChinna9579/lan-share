@@ -62,7 +62,7 @@ Every control message is a frame:
 | --- | --- | --- | --- |
 | `hello` | both, first frame | `v` (int), `name` (string), `platform` | Version mismatch → `error` `version`, close |
 | `ping` | client → server | — | |
-| `pong` | server → client | `reach` (bool, optional) | `false` = "I can't connect back to you" (usually a firewall on the pinging device) |
+| `pong` | server → client | `reach` (bool, optional), `battery` (int 1–100, optional), `charging` (bool, with `battery`) | `reach: false` = "I can't connect back to you" (usually a firewall on the pinging device). Phones add their battery level, which the laptop shows beside the phone's name |
 | `error` | either | `code` (string), `message` (string) | See codes below |
 
 ### Pairing

@@ -87,6 +87,7 @@ type clipNote struct {
 	At     time.Time `json:"at"`
 	// Offered: not put on the clipboard yet; Copy (notification or window) does.
 	Offered bool `json:"offered,omitempty"`
+	Link    string `json:"link,omitempty"` // a web link in it: Open shows it in the browser
 }
 
 // approval is an incoming transfer waiting for Accept or Decline.
@@ -348,18 +349,23 @@ func (a *app) clipFromPhone(peerID, from, text string, auto bool) bool {
 		}
 	}
 	p, n := preview(text)
+	link := linkIn(text)
 	a.mu.Lock()
-	a.clipIn = &clipNote{Device: from, Text: p, Chars: n, At: time.Now(), Offered: ask}
+	a.clipIn = &clipNote{Device: from, Text: p, Chars: n, At: time.Now(), Offered: ask, Link: link}
 	a.clipFull = text
 	a.mu.Unlock()
 	short, _ := preview(strings.Join(strings.Fields(text), " "))
 	if len([]rune(short)) > 80 {
 		short = string([]rune(short)[:80]) + "…"
 	}
-	if ask {
+	switch {
+	case ask:
 		log.Printf("clipboard: %d characters from %s, offered (click to copy)", n, from)
-		showClipPopup(a, "Copied on "+from, short)
-	} else {
+		showClipPopup(a, popupMsg{Title: "Copied on " + from, Body: short, Copy: true, Link: link != ""})
+	case link != "": // a link: the box offers Open (it's on the clipboard already)
+		log.Printf("clipboard: %d characters from %s (a link)", n, from)
+		showClipPopup(a, popupMsg{Title: "Link from " + from + " · copied", Body: short, Link: true})
+	default:
 		log.Printf("clipboard: %d characters from %s", n, from)
 		go notify("Copied from "+from, short+" · paste with Ctrl+V")
 	}
@@ -378,6 +384,21 @@ func (a *app) copyOffered() error {
 	a.hub.changed()
 	log.Printf("clipboard: copied what a phone offered")
 	return clipboard.Write(text)
+}
+
+// openClipLink opens the link in the last text a phone sent (the box's or window's Open).
+func (a *app) openClipLink() error {
+	a.mu.Lock()
+	link, from := "", ""
+	if a.clipIn != nil {
+		link, from = a.clipIn.Link, a.clipIn.Device
+	}
+	a.mu.Unlock()
+	if link == "" {
+		return errors.New("there's no link to open")
+	}
+	log.Printf("clipboard: opened the link from %s", from)
+	return openLink(link)
 }
 
 // clipForPhone answers "paste from laptop".
@@ -997,6 +1018,8 @@ func (a *app) stateJSON() []byte {
 		Addr        string    `json:"addr"`
 		LastSeen    time.Time `json:"lastSeen"`
 		CantReachUs bool      `json:"cantReachUs"`
+		Battery     int       `json:"battery,omitempty"` // 1-100, from its last ping
+		Charging    bool      `json:"charging,omitempty"`
 	}
 	type folder struct {
 		Key     string `json:"key"`
@@ -1007,7 +1030,7 @@ func (a *app) stateJSON() []byte {
 	}
 	var devs []dev
 	for _, s := range a.tracker.Snapshot() {
-		devs = append(devs, dev{s.ID, s.Name, s.Status.String(), hostOnly(s.Addr), s.LastSeen, s.CantReachUs})
+		devs = append(devs, dev{s.ID, s.Name, s.Status.String(), hostOnly(s.Addr), s.LastSeen, s.CantReachUs, s.Battery, s.Charging})
 	}
 	var fl []folder
 	for _, r := range a.folders.Roots() {

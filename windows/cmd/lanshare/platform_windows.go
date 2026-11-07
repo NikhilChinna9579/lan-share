@@ -120,6 +120,21 @@ func openPath(p string, selectIt bool) error {
 	return exec.Command("explorer", p).Start()
 }
 
+// openURL opens a web address in the default browser.
+func openURL(u string) error {
+	verb, _ := syscall.UTF16PtrFromString("open")
+	target, err := syscall.UTF16PtrFromString(u)
+	if err != nil {
+		return err
+	}
+	r, _, _ := syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW").Call(0,
+		uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(target)), 0, 0, 1 /* SW_SHOWNORMAL */)
+	if r <= 32 {
+		return errors.New("Windows couldn't open the link")
+	}
+	return nil
+}
+
 // showError is used when something fails before the window can open.
 func showError(msg string) {
 	user32 := syscall.NewLazyDLL("user32.dll")

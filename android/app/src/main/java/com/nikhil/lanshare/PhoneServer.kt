@@ -117,6 +117,12 @@ class PhoneServer(private val ctx: Context, private val myName: String, private 
                     // point the user at the Windows Firewall fix.
                     val pong = JSONObject().put("type", "pong")
                     Hub.canReach(peerId)?.let { pong.put("reach", it) }
+                    // The battery, so the laptop can show it beside this phone's name.
+                    runCatching {
+                        val bm = ctx.getSystemService(android.os.BatteryManager::class.java)
+                        val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                        if (level in 1..100) pong.put("battery", level).put("charging", bm.isCharging)
+                    }
                     conn.send(pong)
                 }
                 "folders_request" -> {

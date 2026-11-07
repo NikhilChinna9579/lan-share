@@ -80,9 +80,14 @@ async function step(name, fn) {
     `[DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h); ` +
     `[DllImport("user32.dll")] public static extern System.IntPtr SendMessage(System.IntPtr h, int m, System.IntPtr w, System.IntPtr l);'; ` +
     `$h = [U2.P]::FindWindow('LanShareClipPopup', [NullString]::Value); ` +
-    (what === "click"
-      ? `$b = [U2.P]::FindWindowEx($h, [System.IntPtr]::Zero, 'Button', 'Copy'); if ($b -eq [System.IntPtr]::Zero) { 'no button' } else { [void][U2.P]::SendMessage($b, 0xF5, [System.IntPtr]::Zero, [System.IntPtr]::Zero); 'clicked' }`
+    // "visible": is the box up? "click:Open" presses a button; "shown:Open": is that button showing?
+    (what.includes(":")
+      ? `$b = [U2.P]::FindWindowEx($h, [System.IntPtr]::Zero, 'Button', '${what.split(":")[1]}'); ` +
+        (what.startsWith("click:")
+          ? `if ($b -eq [System.IntPtr]::Zero) { 'no button' } else { [void][U2.P]::SendMessage($b, 0xF5, [System.IntPtr]::Zero, [System.IntPtr]::Zero); 'clicked' }`
+          : `if ($b -ne [System.IntPtr]::Zero -and [U2.P]::IsWindowVisible($b)) { 'yes' } else { 'no' }`)
       : `if ($h -ne [System.IntPtr]::Zero -and [U2.P]::IsWindowVisible($h)) { 'yes' } else { 'no' }`)], { timeout: 30_000 }).toString().trim();
+  const openedLinks = () => fs.existsSync(openLog) ? fs.readFileSync(openLog, "utf8").split("\n").filter((l) => l.startsWith("http")) : [];
   const phoneData = path.join(work, "phone");
   const pairFile = path.join(work, "pair.json");
   const phoneInbox = path.join(phoneData, "inbox", "Download");
@@ -136,11 +141,13 @@ async function step(name, fn) {
     fs.mkdirSync(path.join(phoneInbox, "Work", "Reports"), { recursive: true });
 
     await step("phone pairs; window shows success, then the phone online", async () => {
-      start("phone", fakephone, ["-data", phoneData, "-pair", pairFile, "-name", "Nikhil's phone", "-port", "47821"]);
+      start("phone", fakephone, ["-data", phoneData, "-pair", pairFile, "-name", "Nikhil's phone", "-port", "47821", "-battery", "64"]);
       await page.getByText("Paired with Nikhil's phone").first().waitFor();
       await settle(); await page.screenshot({ path: path.join(out, "w03-paired.png") });
       await page.getByRole("button", { name: "Done" }).click();
       await page.getByText(/Online · /).waitFor({ timeout: 15_000 });
+      // The phone's battery, from its pings, beside its name.
+      await page.locator(".dev .batt", { hasText: "64%" }).waitFor({ timeout: 10_000 });
       await settle(); await page.screenshot({ path: path.join(out, "w04-online.png") });
     });
 
@@ -340,10 +347,40 @@ async function step(name, fn) {
       await waitFor("on the laptop's clipboard", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "https://example.com/from-phone", 10_000);
       await page.locator(".card.clip", { hasText: "Copied from Nikhil's phone" }).getByText("https://example.com/from-phone").waitFor();
       await settle(); await page.screenshot({ path: path.join(out, "w08i-clipboard.png") });
+      if (win) { // a link: the box comes up with Open; Dismiss closes it
+        await waitFor("the link box", () => clipPopup("visible") === "yes", 15_000);
+        if (clipPopup("click:Dismiss") !== "clicked") throw new Error("Dismiss button");
+        await waitFor("the box closed", () => clipPopup("visible") === "no", 10_000);
+      }
       // Copied something else since: the card's Copy button puts the phone's text back.
       await page.evaluate(() => api("/api/clip/set", {text: "something else"}));
       await page.locator('[data-act="clipcopy"]').click();
       await waitFor("restored", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "https://example.com/from-phone");
+    });
+
+    await step("a link from the phone: Open shows it in the browser", async () => {
+      const link = "https://example.com/watch?v=lan&t=9s";
+      const before = openedLinks().length;
+      start("phone-link", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47864", "-clip-push", "Great video " + link]);
+      await waitFor("on the laptop's clipboard", async () => (await page.evaluate(() => api("/api/clip", {}))).text === "Great video " + link, 10_000);
+      if (win) { // the box at the bottom-right: Open (no Copy: it's on the clipboard already)
+        await waitFor("the link box", () => clipPopup("visible") === "yes", 15_000);
+        if (clipPopup("shown:Open") !== "yes") throw new Error("no Open button on the box");
+        if (clipPopup("shown:Copy") !== "no") throw new Error("Copy shown for text already copied");
+        const r = clipPopup("click:Open");
+        if (r !== "clicked") throw new Error("Open button: " + r);
+        await waitFor("the box closed", () => clipPopup("visible") === "no", 10_000);
+        await waitFor("opened from the box", () => openedLinks().length === before + 1, 10_000);
+      }
+      const card = page.locator(".card.clip", { hasText: "Copied from Nikhil's phone" });
+      await card.locator('[data-act="clipopen"]').waitFor();
+      await settle(); await page.screenshot({ path: path.join(out, "w08j-link.png") });
+      await card.locator('[data-act="clipopen"]').click();
+      await waitFor("opened in the browser", () => openedLinks().filter((l) => l === link).length === (win ? 2 : 1), 10_000);
+      // Plain text has no Open.
+      start("phone-nolink", fakephone, ["-data", phoneData, "-name", "Nikhil's phone", "-port", "47865", "-clip-push", "Just words 3381"]);
+      await page.locator(".card.clip", { hasText: "Just words 3381" }).waitFor({ timeout: 10_000 });
+      if (await page.locator('[data-act="clipopen"]').count()) throw new Error("Open shown for text without a link");
     });
 
     await step("shared clipboard: copied on the phone by itself: offered with Copy, not pasted over", async () => {
@@ -353,7 +390,8 @@ async function step(name, fn) {
         await waitFor("the Copied box", () => clipPopup("visible") === "yes", 15_000);
         if (await page.locator(".card.clip", { hasText: "Copied on Nikhil's phone" }).count()) throw new Error("also shown inside the window");
         if ((await page.evaluate(() => api("/api/clip", {}))).text !== "keep me") throw new Error("replaced the clipboard without asking");
-        const r = clipPopup("click");
+        if (clipPopup("shown:Open") !== "no") throw new Error("Open shown for text without a link");
+        const r = clipPopup("click:Copy");
         if (r !== "clicked") throw new Error("Copy button: " + r);
         await waitFor("the box closed", () => clipPopup("visible") === "no", 10_000);
       } else {
