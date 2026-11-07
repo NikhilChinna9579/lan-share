@@ -1,0 +1,41 @@
+2026/11/07 05:20:31 LAN Share dev started as "DESKTOP-NIKHIL" on 10.1.0.253:47900; window at http://127.0.0.1:45643/#t=dc0a1f00b0da07b2b23420eeb040bafdecf11f04ffcc62fc
+UI: http://127.0.0.1:45643/#t=dc0a1f00b0da07b2b23420eeb040bafdecf11f04ffcc62fc
+2026/11/07 05:20:32 pairing open until 05:22:32
+2026/11/07 05:20:34 paired: Paired with sdk_gphone64_x86_64 It finds this laptop by itself from now on.
+2026/11/07 05:20:34 notify: Paired with sdk_gphone64_x86_64 — It will find this laptop by itself from now on.
+2026/11/07 05:20:39 online: sdk_gphone64_x86_64 is online 127.0.0.1
+2026/11/07 05:20:43 sent: Sent 1 file to sdk_gphone64_x86_64 test
+2026/11/07 05:20:51 received: Got Quarterly report.pdf from sdk_gphone64_x86_64 2.9 MB in 0.2 s · in Downloads
+2026/11/07 05:20:51 notify: Got Quarterly report.pdf — From sdk_gphone64_x86_64 · 2.9 MB in 0.2 s · in Downloads
+2026/11/07 05:20:53 clipboard: sent 16 characters to sdk_gphone64_x86_64
+2026/11/07 05:21:03 clipboard: sent 45 characters to sdk_gphone64_x86_64
+2026/11/07 05:21:17 clipboard: sent 16 characters to sdk_gphone64_x86_64
+2026/11/07 05:21:27 clipboard: 22 characters from sdk_gphone64_x86_64
+2026/11/07 05:21:27 notify: Copied from sdk_gphone64_x86_64 — Hello from the phone 📱 · paste with Ctrl+V
+2026/11/07 05:21:27 clipboard: 22 characters from sdk_gphone64_x86_64, offered (click to copy)
+2026/11/07 05:21:27 notify: Copied on sdk_gphone64_x86_64 — Hello from the phone 📱 · click to copy
+2026/11/07 05:21:39 clipboard: 26 characters from sdk_gphone64_x86_64 (a link)
+2026/11/07 05:21:39 notify: Link from sdk_gphone64_x86_64 · copied — https://example.com/shared · click to open
+2026/11/07 05:21:50 clipboard: 24 characters from sdk_gphone64_x86_64, offered (click to copy)
+2026/11/07 05:21:50 notify: Copied on sdk_gphone64_x86_64 — Copied on the phone 4417 · click to copy
+2026/11/07 05:21:51 clipboard: copied what a phone offered
+2026/11/07 05:22:11 clipboard: 14 characters from sdk_gphone64_x86_64, offered (click to copy)
+2026/11/07 05:22:11 notify: Copied on sdk_gphone64_x86_64 — Tile copy 5150 · click to copy
+2026/11/07 05:22:19 sent: Sent 2 files to sdk_gphone64_x86_64 test
+2026/11/07 05:22:22 clipboard: 14 characters from sdk_gphone64_x86_64, offered (click to copy)
+2026/11/07 05:22:22 notify: Copied on sdk_gphone64_x86_64 — Tile copy 5150 · click to copy
+2026/11/07 05:22:26 sent: Sent 1 file to sdk_gphone64_x86_64 test
+2026/11/07 05:22:48 received: Received a.jpg From sdk_gphone64_x86_64 · 98 KB in under 0.1 s · in Downloads
+2026/11/07 05:22:48 received: Received b.jpg From sdk_gphone64_x86_64 · 98 KB in under 0.1 s · in Downloads
+2026/11/07 05:22:48 received: Received c.jpg From sdk_gphone64_x86_64 · 98 KB in under 0.1 s · in Downloads
+2026/11/07 05:22:48 notify: Received 3 files — From sdk_gphone64_x86_64 · 293 KB in under 0.1 s · in Downloads
+2026/11/07 05:23:04 received: Received IMG_2041.jpg From sdk_gphone64_x86_64 · 2.0 MB in 0.3 s · in Pictures
+2026/11/07 05:23:04 notify: Received IMG_2041.jpg — From sdk_gphone64_x86_64 · 2.0 MB in 0.3 s · in Pictures
+2026/11/07 05:23:26 error: Receiving from sdk_gphone64_x86_64 failed receiving Big video.mp4: unexpected EOF
+2026/11/07 05:23:58 received: Received Big video.mp4 From sdk_gphone64_x86_64 · 200.0 MB in 29 s · in Downloads
+2026/11/07 05:23:58 notify: Received Big video.mp4 — From sdk_gphone64_x86_64 · 200.0 MB in 29 s · in Downloads
+2026/11/07 05:24:13 clipboard: 18 characters from sdk_gphone64_x86_64
+2026/11/07 05:24:13 notify: Copied from sdk_gphone64_x86_64 — direct-share-check · paste with Ctrl+V
+2026/11/07 05:24:35 sent: sdk_gphone64_x86_64 got Plan.pdf From Documents · 49 KB in under 0.1 s
+2026/11/07 05:25:05 info: Renamed this laptop to NIKHIL-PC Phones see the new name from now on.
+2026/11/07 05:25:08 info: Renamed this laptop to DESKTOP-NIKHIL Phones see the new name from now on.

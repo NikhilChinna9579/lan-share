@@ -1,0 +1,5 @@
+2026/11/07 05:26:16 LAN Share dev started as "DESKTOP-NIKHIL" on 10.1.0.253:47900; window at http://127.0.0.1:39075/#t=f2d49af663b183b9abaa07cb4d6260ff6ee44653899a9af2
+UI: http://127.0.0.1:39075/#t=f2d49af663b183b9abaa07cb4d6260ff6ee44653899a9af2
+2026/11/07 05:26:16 online: sdk_gphone64_x86_64 is online 127.0.0.1
+2026/11/07 05:26:23 error: sdk_gphone64_x86_64 can't connect to this laptop Windows Firewall is probably blocking LAN Share. Open Settings → Allow through firewall.
+2026/11/07 05:26:33 offline: sdk_gphone64_x86_64 went offline 

@@ -1,0 +1,92 @@
+[1s] ok    install APK
+[10s] ok    first launch shows pairing
+[10s] ok    first start asks with Android's own dialogs (only what isn't allowed yet)
+[10s] ok    …then “always run in the background?”
+[20s] ok    …then “add the Send copied text tile?”
+[26s] ok    …the tile answer comes back
+[26s] ok    …and setup is done
+[26s] ok    home screen shows which build this is (build time)
+[38s] ok    …only on the first start
+[39s] ok    laptop program started
+[39s] ok    laptop opened pairing
+[44s] ok    pairing works
+[45s] ok    shared-folder choice shown after pairing
+[47s] ok    laptop sees the phone online
+[48s] ok    phone sees the laptop online
+[50s] ok    laptop sent a file to the phone
+[50s] ok    file arrived on the phone intact size
+[50s] ok    phone shows it, with the time taken
+[57s] ok    laptop lists the phone's Downloads
+[57s] ok    laptop searches the phone's folders
+[59s] ok    laptop got a file from the phone, intact size
+[59s] ok    phone logs what it served
+[59s] ok    the laptop shows the phone's battery ("battery":100,"charging":true)
+[61s] ok    copied on the laptop: a notification with a Copy button (the default)
+[68s] ok    …Copy puts it on the phone's clipboard
+[69s] ok    …at once (13 ms), no repeated tapping
+[70s] ok    a link copied on the laptop: offered on the phone
+[77s] ok    …and its Open button opens the link
+[85s] ok    with asking off: straight onto the phone's clipboard
+[95s] ok    the phone sends what's copied
+[95s] ok    …and it's on the laptop's clipboard
+[101s] ok    paste from the laptop
+[101s] ok    laptop pastes from the phone while LAN Share is open there
+[101s] ok    …the phone's clipboard came over
+[106s] ok    …and says why not when it isn't open
+[107s] ok    Share → LAN Share with text puts it on the laptop's clipboard
+[107s] ok    …and the laptop offers Open for the link
+[117s] ok    copied on the phone: sent by itself when LAN Share opens
+[118s] ok    …and the laptop offers it (Copy button)
+[118s] ok    …without replacing the laptop's clipboard
+[118s] ok    …Copy on the laptop puts it there
+[124s] ok    …only once, not on every open
+[133s] ok    the tile opens a small window with what's copied and the devices
+[138s] ok    …in the middle of the screen
+[138s] ok    Send beside the laptop sends it
+[139s] ok    …and the window closes
+[139s] ok    …and the laptop shows it in its Copy box
+[139s] ok    …its clipboard untouched until Copy
+[139s] ok    LAN Share's notification has a “Send copied text” button
+[146s] note  couldn't swipe the notification away here; unlock check skipped
+[146s] ok    laptop sent a whole folder; layout kept on the phone
+[147s] ok    laptop made a new folder on the phone
+[151s] ok    phone asks before receiving
+[153s] ok    accepting on the phone
+[153s] ok    accepted file arrived
+[159s] ok    browsing off: laptop is told no
+[175s] ok    phone sent a whole folder; layout kept on the laptop
+[190s] ok    picked a folder on the laptop
+[191s] ok    phone sent a file to the laptop
+[191s] ok    file arrived on the laptop intact size
+[191s] ok    phone shows the time taken
+[213s] ok    cancel stops the transfer
+[214s] ok    cancel leaves nothing on the laptop
+[216s] ok    retry continues where it stopped (doesn't start over)
+[245s] ok    retry sends it again, intact size
+[252s] ok    history survives an app restart
+[256s] ok    paired with another phone using its code
+[259s] ok    file arrived on the other phone
+[260s] ok    paired laptop and phone appear as targets in the Share menu
+[260s] ok    Share → the laptop's target picks it without asking
+[261s] ok    …and the shared text is on that laptop
+[265s] ok    another phone paired with this one using the code
+[268s] ok    Browse on the main screen opens the laptop's folders
+[279s] ok    a folder of 40+ files: the Get button stays on screen
+[282s] ok    tap a laptop's file: fetched to open it
+[284s] ok    …and handed to a viewer (or a clear note if there's none)
+[284s] ok    opening doesn't fill Downloads
+[293s] ok    opening it again needs no download
+[305s] ok    phone browsed the laptop, ticked a file and got it
+[305s] ok    …copied from the opened file, not downloaded again
+[311s] ok    phone renamed: the laptop shows the new name
+[315s] ok    laptop renamed: the phone shows the new name
+[355s] ok    forgetting a laptop on the phone
+[372s] ok    settings offer 'stay reachable'
+[389s] ok    phone explains one-way (firewall) problem
+[390s] ok    laptop shows the firewall warning
+[395s] ok    receiving starts by itself after a phone restart
+[395s] skip  release check (signing key not set up yet)
+[401s] ok    Clear empties Recent activity
+[404s] ok    …and it stays empty after a restart
+[404s] ok    no crashes
+[404s] done: 0 failure(s)
